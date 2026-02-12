@@ -8,7 +8,7 @@ export function useJobStatus(jobId: string | null) {
     enabled: !!jobId,
     refetchInterval: (query) => {
       const data = query.state.data
-      if (data && (data.status === "completed" || data.status === "failed")) {
+      if (data && (data.status === "complete" || data.status === "failed")) {
         return false
       }
       return 2000 // Poll every 2 seconds while in progress

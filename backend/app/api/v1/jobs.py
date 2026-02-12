@@ -1,9 +1,13 @@
 """Background job status endpoints."""
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.logging_config import get_logger
+from app.db.session import get_db
+from app.models.search import SearchHistory
 from app.models.user import User
 from app.schemas.search import SearchStatusResponse
 
@@ -15,12 +19,26 @@ router = APIRouter(prefix="/jobs", tags=["Jobs"])
 async def get_job_status(
     job_id: str,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> SearchStatusResponse:
     """
     Get status of a background job.
 
     Poll this endpoint to check search progress.
     """
+    # Ensure the job belongs to the authenticated user.
+    result = await db.execute(
+        select(SearchHistory.id).where(
+            SearchHistory.job_id == job_id,
+            SearchHistory.user_id == current_user.id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found",
+        )
+
     job = AsyncResult(job_id)
 
     if job.state == "PENDING":
@@ -71,12 +89,26 @@ async def get_job_status(
 async def cancel_job(
     job_id: str,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
     Cancel a running background job.
 
     Note: This may not immediately stop already-running tasks.
     """
+    # Ensure the job belongs to the authenticated user.
+    result = await db.execute(
+        select(SearchHistory.id).where(
+            SearchHistory.job_id == job_id,
+            SearchHistory.user_id == current_user.id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found",
+        )
+
     job = AsyncResult(job_id)
 
     if job.state in ["SUCCESS", "FAILURE"]:

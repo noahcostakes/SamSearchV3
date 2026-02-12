@@ -193,3 +193,85 @@ class TestSAMClient:
             params = mock_get.call_args[1]["params"]
             assert "api_key" in params
             assert params["api_key"] == "test-api-key"
+
+    @pytest.mark.asyncio
+    async def test_search_for_profile_uses_single_naics_and_relaxes_filters(self, client: SAMClient):
+        """Profile search should try one NAICS at a time and relax filters before broad fallback."""
+        profile = {
+            "primary_naics": "541511",
+            "secondary_naics": ["541512", "518210"],
+            "certifications": ["8(a)"],
+            "service_area": ["VA"],
+            "priority_keywords": ["cloud migration", "zero trust"],
+            "past_performance_keywords": ["modernization"],
+        }
+
+        with patch.object(client, "search", new_callable=AsyncMock) as mock_search:
+            mock_search.side_effect = [
+                {"totalRecords": 0, "opportunitiesData": []},
+                {"totalRecords": 0, "opportunitiesData": []},
+                {
+                    "totalRecords": 5,
+                    "opportunitiesData": [{"noticeId": "n-1"}],
+                },
+            ]
+
+            result = await client.search_for_profile(profile, days_back=30)
+
+            assert result["totalRecords"] == 5
+            assert len(result["opportunitiesData"]) == 1
+
+            # First attempt: strict primary NAICS.
+            first_call = mock_search.call_args_list[0].kwargs
+            assert first_call["naics_codes"] == ["541511"]
+            assert first_call["keywords"] == "cloud migration"
+            assert first_call["ptype"] == "o,p,k"
+            assert first_call["set_aside"] == "8A"
+            assert first_call["state"] == "VA"
+
+            # Second attempt: keep NAICS but relax keywords.
+            second_call = mock_search.call_args_list[1].kwargs
+            assert second_call["naics_codes"] == ["541511"]
+            assert second_call["keywords"] is None
+            assert second_call["set_aside"] == "8A"
+            assert second_call["state"] == "VA"
+
+            # Third attempt: relax NAICS context filters fully.
+            third_call = mock_search.call_args_list[2].kwargs
+            assert third_call["naics_codes"] == ["541511"]
+            assert third_call["keywords"] is None
+            assert third_call["set_aside"] is None
+            assert third_call["state"] is None
+
+    @pytest.mark.asyncio
+    async def test_search_for_profile_falls_back_to_broad_query(self, client: SAMClient):
+        """When NAICS-constrained attempts return nothing, fall back to broad ptype query."""
+        profile = {
+            "primary_naics": "541511",
+            "secondary_naics": ["541512"],
+            "certifications": [],
+            "service_area": [],
+            "priority_keywords": [],
+            "past_performance_keywords": [],
+        }
+
+        with patch.object(client, "search", new_callable=AsyncMock) as mock_search:
+            mock_search.side_effect = [
+                {"totalRecords": 0, "opportunitiesData": []},
+                {"totalRecords": 0, "opportunitiesData": []},
+                {"totalRecords": 0, "opportunitiesData": []},
+                {"totalRecords": 0, "opportunitiesData": []},
+                {"totalRecords": 42, "opportunitiesData": [{"noticeId": "n-42"}]},
+            ]
+
+            result = await client.search_for_profile(profile, days_back=30)
+
+            assert result["totalRecords"] == 42
+            assert result["searchMetadata"]["strategy"] == "broad_ptype_only"
+
+            final_call = mock_search.call_args_list[-1].kwargs
+            assert final_call["naics_codes"] is None
+            assert final_call["keywords"] is None
+            assert final_call["set_aside"] is None
+            assert final_call["state"] is None
+            assert final_call["ptype"] == "o,p,k,r,s"

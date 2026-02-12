@@ -3,11 +3,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, Index, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+from app.db.types import JSONType
 
 
 class AuditLog(Base):
@@ -34,7 +34,7 @@ class AuditLog(Base):
     resource_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Additional context
-    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="success")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 

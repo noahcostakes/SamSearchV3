@@ -3,19 +3,68 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 # Valid US state codes
 US_STATES = [
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-    "DC", "PR", "VI", "GU", "AS", "MP",
+    "AL",
+    "AK",
+    "AZ",
+    "AR",
+    "CA",
+    "CO",
+    "CT",
+    "DE",
+    "FL",
+    "GA",
+    "HI",
+    "ID",
+    "IL",
+    "IN",
+    "IA",
+    "KS",
+    "KY",
+    "LA",
+    "ME",
+    "MD",
+    "MA",
+    "MI",
+    "MN",
+    "MS",
+    "MO",
+    "MT",
+    "NE",
+    "NV",
+    "NH",
+    "NJ",
+    "NM",
+    "NY",
+    "NC",
+    "ND",
+    "OH",
+    "OK",
+    "OR",
+    "PA",
+    "RI",
+    "SC",
+    "SD",
+    "TN",
+    "TX",
+    "UT",
+    "VT",
+    "VA",
+    "WA",
+    "WV",
+    "WI",
+    "WY",
+    "DC",
+    "PR",
+    "VI",
+    "GU",
+    "AS",
+    "MP",
 ]
 
-# Valid certifications
 VALID_CERTIFICATIONS = [
     "8(a)",
     "HUBZone",
@@ -26,7 +75,6 @@ VALID_CERTIFICATIONS = [
     "SDB",
 ]
 
-# Valid clearance levels
 VALID_CLEARANCE_LEVELS = [
     "None",
     "Confidential",
@@ -35,13 +83,12 @@ VALID_CLEARANCE_LEVELS = [
     "TS/SCI",
 ]
 
-# Valid contract types
 VALID_CONTRACT_TYPES = [
-    "FFP",  # Firm Fixed Price
-    "T&M",  # Time and Materials
+    "FFP",
+    "T&M",
     "Cost-Plus",
-    "IDIQ",  # Indefinite Delivery/Indefinite Quantity
-    "BPA",  # Blanket Purchase Agreement
+    "IDIQ",
+    "BPA",
     "GSA Schedule",
 ]
 
@@ -49,153 +96,125 @@ VALID_CONTRACT_TYPES = [
 class ProfileCreate(BaseModel):
     """Schema for creating a company profile."""
 
-    # Basic Info
     company_name: str = Field(..., min_length=2, max_length=200)
 
-    # SAM.gov Registration
     cage_code: Optional[str] = Field(None, min_length=5, max_length=5)
     uei_number: Optional[str] = Field(None, min_length=12, max_length=12)
     duns_number: Optional[str] = Field(None, min_length=9, max_length=9)
 
-    # NAICS codes
     primary_naics: str = Field(..., min_length=6, max_length=6)
     secondary_naics: List[str] = Field(default_factory=list, max_length=10)
 
-    # Capabilities
     core_competencies: List[str] = Field(..., min_length=1, max_length=20)
     technical_skills: List[str] = Field(default_factory=list, max_length=30)
-    
-    # Past Performance
     past_performance_keywords: List[str] = Field(default_factory=list, max_length=50)
     priority_keywords: List[str] = Field(default_factory=list, max_length=30)
 
-    # Certifications
     certifications: List[str] = Field(default_factory=list, max_length=10)
-    
-    # Security Clearance
     clearance_level: str = Field("None")
 
-    # Preferences
     target_contract_min: int = Field(25000, ge=0, le=100_000_000)
-    target_contract_max: int = Field(2000000, ge=0, le=100_000_000)
+    target_contract_max: int = Field(2_000_000, ge=0, le=100_000_000)
     preferred_agencies: List[str] = Field(default_factory=list, max_length=20)
     service_area: List[str] = Field(default_factory=list, max_length=55)
     max_response_days: int = Field(30, ge=1, le=365)
-    
-    # Contract Preferences
+
     contract_types_preference: List[str] = Field(default_factory=list, max_length=10)
     open_to_subcontracting: bool = True
     open_to_prime_contracting: bool = True
 
-    # Constraints
     blacklist_keywords: List[str] = Field(default_factory=list, max_length=50)
     requires_clearance: bool = False
 
     @field_validator("primary_naics")
     @classmethod
-    def validate_primary_naics(cls, v: str) -> str:
-        """Validate NAICS code is exactly 6 digits."""
-        if not re.match(r"^\d{6}$", v):
+    def validate_primary_naics(cls, value: str) -> str:
+        if not re.match(r"^\d{6}$", value):
             raise ValueError("NAICS code must be exactly 6 digits")
-        return v
+        return value
 
     @field_validator("secondary_naics")
     @classmethod
-    def validate_secondary_naics(cls, v: List[str]) -> List[str]:
-        """Validate all secondary NAICS codes."""
-        for naics in v:
+    def validate_secondary_naics(cls, value: List[str]) -> List[str]:
+        for naics in value:
             if not re.match(r"^\d{6}$", naics):
                 raise ValueError(f"Invalid NAICS code: {naics}")
-        return v
-
-    @field_validator("headquarters_state")
-    @classmethod
-    def validate_state(cls, v: str) -> str:
-        """Validate state code."""
-        v = v.upper()
-        if v not in US_STATES:
-            raise ValueError(f"Invalid state code: {v}")
-        return v
+        return value
 
     @field_validator("service_area")
     @classmethod
-    def validate_service_area(cls, v: List[str]) -> List[str]:
-        """Validate service area states."""
-        validated = []
-        for state in v:
-            state = state.upper()
-            if state not in US_STATES:
-                raise ValueError(f"Invalid state code in service area: {state}")
-            validated.append(state)
+    def validate_service_area(cls, value: List[str]) -> List[str]:
+        validated: List[str] = []
+        for state in value:
+            normalized = state.upper()
+            if normalized not in US_STATES:
+                raise ValueError(f"Invalid state code in service area: {normalized}")
+            validated.append(normalized)
         return validated
 
     @field_validator("certifications")
     @classmethod
-    def validate_certifications(cls, v: List[str]) -> List[str]:
-        """Validate certifications are from allowed list."""
-        for cert in v:
+    def validate_certifications(cls, value: List[str]) -> List[str]:
+        for cert in value:
             if cert not in VALID_CERTIFICATIONS:
                 raise ValueError(f"Invalid certification: {cert}")
-        return v
+        return value
 
     @field_validator("target_contract_max")
     @classmethod
-    def validate_contract_range(cls, v: int, info) -> int:
-        """Validate max is greater than or equal to min."""
-        if "target_contract_min" in info.data:
-            if v < info.data["target_contract_min"]:
-                raise ValueError("Max contract value must be >= min value")
-        return v
+    def validate_contract_range(cls, value: int, info: ValidationInfo) -> int:
+        min_value = info.data.get("target_contract_min")
+        if min_value is not None and value < min_value:
+            raise ValueError("Max contract value must be >= min value")
+        return value
 
     @field_validator("core_competencies")
     @classmethod
-    def validate_competencies(cls, v: List[str]) -> List[str]:
-        """Validate and clean competencies."""
-        cleaned = [comp.strip() for comp in v if comp.strip()]
+    def validate_competencies(cls, value: List[str]) -> List[str]:
+        cleaned = [item.strip() for item in value if item.strip()]
         if not cleaned:
             raise ValueError("At least one core competency is required")
         return cleaned
 
     @field_validator("clearance_level")
     @classmethod
-    def validate_clearance_level(cls, v: str) -> str:
-        """Validate clearance level."""
-        if v not in VALID_CLEARANCE_LEVELS:
-            raise ValueError(f"Invalid clearance level: {v}. Must be one of {VALID_CLEARANCE_LEVELS}")
-        return v
+    def validate_clearance_level(cls, value: str) -> str:
+        if value not in VALID_CLEARANCE_LEVELS:
+            raise ValueError(
+                f"Invalid clearance level: {value}. Must be one of {VALID_CLEARANCE_LEVELS}"
+            )
+        return value
 
     @field_validator("contract_types_preference")
     @classmethod
-    def validate_contract_types(cls, v: List[str]) -> List[str]:
-        """Validate contract types."""
-        for ct in v:
-            if ct not in VALID_CONTRACT_TYPES:
-                raise ValueError(f"Invalid contract type: {ct}. Must be one of {VALID_CONTRACT_TYPES}")
-        return v
+    def validate_contract_types(cls, value: List[str]) -> List[str]:
+        for contract_type in value:
+            if contract_type not in VALID_CONTRACT_TYPES:
+                raise ValueError(
+                    f"Invalid contract type: {contract_type}. Must be one of {VALID_CONTRACT_TYPES}"
+                )
+        return value
 
     @field_validator("cage_code")
     @classmethod
-    def validate_cage_code(cls, v: Optional[str]) -> Optional[str]:
-        """Validate CAGE code format."""
-        if v and not re.match(r"^[A-Z0-9]{5}$", v.upper()):
+    def validate_cage_code(cls, value: Optional[str]) -> Optional[str]:
+        if value and not re.match(r"^[A-Z0-9]{5}$", value.upper()):
             raise ValueError("CAGE code must be 5 alphanumeric characters")
-        return v.upper() if v else None
+        return value.upper() if value else None
 
     @field_validator("uei_number")
     @classmethod
-    def validate_uei(cls, v: Optional[str]) -> Optional[str]:
-        """Validate UEI format."""
-        if v and not re.match(r"^[A-Z0-9]{12}$", v.upper()):
+    def validate_uei(cls, value: Optional[str]) -> Optional[str]:
+        if value and not re.match(r"^[A-Z0-9]{12}$", value.upper()):
             raise ValueError("UEI must be 12 alphanumeric characters")
-        return v.upper() if v else None
+        return value.upper() if value else None
 
     @field_validator("duns_number")
     @classmethod
-    def validate_duns(cls, v: Optional[str]) -> Optional[str]:
-        """Validate DUNS format."""
-        if v and not re.match(r"^\d{9}$", v):
+    def validate_duns(cls, value: Optional[str]) -> Optional[str]:
+        if value and not re.match(r"^\d{9}$", value):
             raise ValueError("DUNS number must be 9 digits")
-        return v
+        return value
 
 
 class ProfileUpdate(BaseModel):
@@ -212,7 +231,6 @@ class ProfileUpdate(BaseModel):
 
     core_competencies: Optional[List[str]] = None
     technical_skills: Optional[List[str]] = None
-    
     past_performance_keywords: Optional[List[str]] = None
     priority_keywords: Optional[List[str]] = None
 
@@ -224,7 +242,7 @@ class ProfileUpdate(BaseModel):
     preferred_agencies: Optional[List[str]] = None
     service_area: Optional[List[str]] = None
     max_response_days: Optional[int] = Field(None, ge=1, le=365)
-    
+
     contract_types_preference: Optional[List[str]] = None
     open_to_subcontracting: Optional[bool] = None
     open_to_prime_contracting: Optional[bool] = None
@@ -234,19 +252,97 @@ class ProfileUpdate(BaseModel):
 
     @field_validator("primary_naics")
     @classmethod
-    def validate_primary_naics(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and not re.match(r"^\d{6}$", v):
+    def validate_primary_naics(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not re.match(r"^\d{6}$", value):
             raise ValueError("NAICS code must be exactly 6 digits")
-        return v
+        return value
 
-    @field_validator("headquarters_state")
+    @field_validator("secondary_naics")
     @classmethod
-    def validate_state(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            v = v.upper()
-            if v not in US_STATES:
-                raise ValueError(f"Invalid state code: {v}")
-        return v
+    def validate_secondary_naics(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+        for naics in value:
+            if not re.match(r"^\d{6}$", naics):
+                raise ValueError(f"Invalid NAICS code: {naics}")
+        return value
+
+    @field_validator("service_area")
+    @classmethod
+    def validate_service_area(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+        validated: List[str] = []
+        for state in value:
+            normalized = state.upper()
+            if normalized not in US_STATES:
+                raise ValueError(f"Invalid state code in service area: {normalized}")
+            validated.append(normalized)
+        return validated
+
+    @field_validator("certifications")
+    @classmethod
+    def validate_certifications(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+        for cert in value:
+            if cert not in VALID_CERTIFICATIONS:
+                raise ValueError(f"Invalid certification: {cert}")
+        return value
+
+    @field_validator("clearance_level")
+    @classmethod
+    def validate_clearance_level(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in VALID_CLEARANCE_LEVELS:
+            raise ValueError(
+                f"Invalid clearance level: {value}. Must be one of {VALID_CLEARANCE_LEVELS}"
+            )
+        return value
+
+    @field_validator("contract_types_preference")
+    @classmethod
+    def validate_contract_types(
+        cls, value: Optional[List[str]]
+    ) -> Optional[List[str]]:
+        if value is None:
+            return value
+        for contract_type in value:
+            if contract_type not in VALID_CONTRACT_TYPES:
+                raise ValueError(
+                    f"Invalid contract type: {contract_type}. Must be one of {VALID_CONTRACT_TYPES}"
+                )
+        return value
+
+    @field_validator("cage_code")
+    @classmethod
+    def validate_cage_code(cls, value: Optional[str]) -> Optional[str]:
+        if value and not re.match(r"^[A-Z0-9]{5}$", value.upper()):
+            raise ValueError("CAGE code must be 5 alphanumeric characters")
+        return value.upper() if value else None
+
+    @field_validator("uei_number")
+    @classmethod
+    def validate_uei(cls, value: Optional[str]) -> Optional[str]:
+        if value and not re.match(r"^[A-Z0-9]{12}$", value.upper()):
+            raise ValueError("UEI must be 12 alphanumeric characters")
+        return value.upper() if value else None
+
+    @field_validator("duns_number")
+    @classmethod
+    def validate_duns(cls, value: Optional[str]) -> Optional[str]:
+        if value and not re.match(r"^\d{9}$", value):
+            raise ValueError("DUNS number must be 9 digits")
+        return value
+
+    @field_validator("target_contract_max")
+    @classmethod
+    def validate_contract_range(cls, value: Optional[int], info: ValidationInfo) -> Optional[int]:
+        if value is None:
+            return value
+        min_value = info.data.get("target_contract_min")
+        if min_value is not None and value < min_value:
+            raise ValueError("Max contract value must be >= min value")
+        return value
 
 
 class ProfileResponse(BaseModel):
@@ -255,9 +351,6 @@ class ProfileResponse(BaseModel):
     id: str
     user_id: str
     company_name: str
-    employee_count: int
-    annual_revenue: Optional[int]
-    headquarters_state: str
 
     cage_code: Optional[str]
     uei_number: Optional[str]
@@ -268,8 +361,6 @@ class ProfileResponse(BaseModel):
 
     core_competencies: List[str]
     technical_skills: List[str]
-    industry_experience_years: int
-    
     past_performance_keywords: List[str]
     priority_keywords: List[str]
 
@@ -281,7 +372,7 @@ class ProfileResponse(BaseModel):
     preferred_agencies: List[str]
     service_area: List[str]
     max_response_days: int
-    
+
     contract_types_preference: List[str]
     open_to_subcontracting: bool
     open_to_prime_contracting: bool

@@ -3,6 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { Plus, Trash2 } from "lucide-react"
 
+import { PageHeader } from "@/components/layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -24,6 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Spinner } from "@/components/ui/spinner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile"
+import type { CompanyProfileUpdate } from "@/services/api"
 import { US_STATES_FULL, CERTIFICATIONS_FULL, CLEARANCE_LEVELS, CONTRACT_TYPES } from "@/types"
 
 const profileSchema = z.object({
@@ -71,7 +73,7 @@ export function ProfilePage() {
     handleSubmit,
     watch,
     setValue,
-    formState: { errors, isDirty },
+    formState: { errors },
   } = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
     values: profile
@@ -171,7 +173,7 @@ export function ProfilePage() {
   const serviceArea = watch("service_area") || []
 
   const onSubmit = (data: ProfileFormData) => {
-    const submitData: any = {
+    const submitData: CompanyProfileUpdate = {
       company_name: data.company_name,
       
       cage_code: data.cage_code || undefined,
@@ -205,9 +207,14 @@ export function ProfilePage() {
     }
     
     // Remove undefined/null/empty values
-    Object.keys(submitData).forEach(key => {
-      if (submitData[key] === undefined || submitData[key] === null || submitData[key] === "") {
-        delete submitData[key]
+    Object.keys(submitData).forEach((key) => {
+      const typedKey = key as keyof CompanyProfileUpdate
+      if (
+        submitData[typedKey] === undefined ||
+        submitData[typedKey] === null ||
+        submitData[typedKey] === ""
+      ) {
+        delete submitData[typedKey]
       }
     })
     
@@ -275,15 +282,14 @@ export function ProfilePage() {
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Company Profile</h1>
-        <p className="text-muted-foreground mt-1">
-          Configure your company information for AI-powered contract matching
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Qualification Data"
+        title="Company Profile"
+        description="Configure your company details to improve AI scoring quality."
+      />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         {/* Basic Info */}
         <Card>
           <CardHeader>

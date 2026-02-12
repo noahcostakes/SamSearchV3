@@ -6,6 +6,7 @@ A full-stack B2B SaaS application that helps small businesses discover, evaluate
 
 - **AI-Powered Opportunity Matching**: Leverages Claude AI to analyze and score contract opportunities based on your company profile
 - **Smart Search**: Advanced search with filters for NAICS codes, set-asides, notice types, and more
+- **Quick Search Top Matches**: Quick search shows the best 10 matches (including low-score matches when needed)
 - **Company Profiles**: Build detailed profiles with capabilities, certifications, and preferences
 - **Opportunity Tracking**: Save and organize opportunities with notes
 - **Secure API Key Storage**: AES-256-GCM encryption for SAM.gov API keys
@@ -61,7 +62,7 @@ A full-stack B2B SaaS application that helps small businesses discover, evaluate
 3. **Generate encryption key**
    ```bash
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-   # Add the output to ENCRYPTION_KEY in .env
+   # Add the output to ENCRYPTION_MASTER_KEY in .env
    ```
 
 4. **Start services**
@@ -163,16 +164,17 @@ npm run dev
 - `DELETE /api/v1/profile/sam-key` - Delete SAM.gov API key
 
 ### Search
-- `POST /api/v1/search` - Start new search
+- `POST /api/v1/search/start` - Start new search
 - `GET /api/v1/search/history` - Get search history
-- `GET /api/v1/search/{job_id}/results` - Get search results
+- `GET /api/v1/search/history/{search_id}` - Get cached results for a search
 - `POST /api/v1/search/save` - Save opportunity
 - `GET /api/v1/search/saved` - Get saved opportunities
+- `PUT /api/v1/search/saved/{id}` - Update saved opportunity status/notes
 - `DELETE /api/v1/search/saved/{id}` - Remove saved opportunity
 
 ### Jobs
-- `GET /api/v1/jobs/{job_id}` - Get job status
-- `GET /api/v1/jobs/{job_id}/result` - Get job result
+- `GET /api/v1/jobs/{job_id}/status` - Get job status
+- `DELETE /api/v1/jobs/{job_id}` - Cancel a running job
 
 ## Security
 
@@ -193,8 +195,20 @@ pytest -v --cov=app
 ### Frontend
 ```bash
 cd frontend
-npm run test
+npm run test -- --run
 ```
+
+## Quick Search Tuning
+
+Quick search returns the top best matches rather than filtering out low scores.  
+If fewer than 10 opportunities are available upstream, the UI shows the available count.
+
+Environment variables:
+
+- `QUICK_SEARCH_RESULT_LIMIT` (default: `10`)
+- `AI_SCORING_CANDIDATE_LIMIT` (default: `100`)
+
+After changing these values, restart both backend API and Celery worker so new settings are applied.
 
 ## Contributing
 

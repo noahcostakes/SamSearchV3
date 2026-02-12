@@ -1,5 +1,8 @@
 """Tests for encryption utilities."""
+import base64
+import os
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.encryption import Encryption, encryption
 
@@ -94,3 +97,46 @@ class TestEncryption:
         decrypted = encryption.decrypt(encrypted)
 
         assert decrypted == original
+
+    def test_strict_mode_rejects_invalid_key_format(self):
+        """Strict mode should fail fast for invalid key material."""
+        with pytest.raises(ValueError):
+            Encryption("short", allow_legacy_fallback=False)
+
+    def test_strict_mode_accepts_base64_key(self):
+        """Strict mode should accept URL-safe base64 keys for 32-byte values."""
+        raw = b"0123456789abcdef0123456789abcdef"
+        strict_key = base64.urlsafe_b64encode(raw).decode("utf-8")
+        enc = Encryption(strict_key, allow_legacy_fallback=False)
+
+        encrypted = enc.encrypt("secret")
+        assert enc.decrypt(encrypted) == "secret"
+
+    def test_legacy_truncated_key_can_still_decrypt_with_base64_key(self):
+        """Compatibility mode should decrypt payloads written by legacy truncation logic."""
+        raw = b"0123456789abcdef0123456789abcdef"
+        base64_key = base64.urlsafe_b64encode(raw).decode("utf-8")
+
+        # Legacy releases treated configured keys as raw bytes and truncated to 32 bytes.
+        legacy_key = base64_key.encode("utf-8")[:32]
+        legacy_aes = AESGCM(legacy_key)
+        nonce = os.urandom(12)
+        ciphertext = legacy_aes.encrypt(nonce, b"secret", associated_data=None)
+        legacy_payload = base64.b64encode(nonce + ciphertext).decode("utf-8")
+
+        enc = Encryption(base64_key, allow_legacy_fallback=True)
+        assert enc.decrypt(legacy_payload) == "secret"
+
+    def test_strict_mode_rejects_legacy_truncated_ciphertext(self):
+        """Strict mode should not silently accept legacy-truncated key ciphertext."""
+        raw = b"0123456789abcdef0123456789abcdef"
+        base64_key = base64.urlsafe_b64encode(raw).decode("utf-8")
+        legacy_key = base64_key.encode("utf-8")[:32]
+        legacy_aes = AESGCM(legacy_key)
+        nonce = os.urandom(12)
+        ciphertext = legacy_aes.encrypt(nonce, b"secret", associated_data=None)
+        legacy_payload = base64.b64encode(nonce + ciphertext).decode("utf-8")
+
+        enc = Encryption(base64_key, allow_legacy_fallback=False)
+        with pytest.raises(ValueError):
+            enc.decrypt(legacy_payload)

@@ -17,6 +17,7 @@ from app.schemas.search import (
     SaveOpportunityRequest,
     SearchHistoryResponse,
     SearchRequest,
+    UpdateSavedOpportunityRequest,
 )
 from app.services.usage_tracker import UsageTracker
 from app.tasks.scoring_tasks import score_opportunities_task
@@ -56,9 +57,11 @@ async def start_search(
             detail="Create a company profile first",
         )
 
-    # Check rate limits
+    # Atomically check and consume rate limits
     usage_tracker = UsageTracker(redis)
-    allowed, error_message = await usage_tracker.check_user_search_limits(current_user.id)
+    allowed, error_message, _, _ = await usage_tracker.try_consume_user_search(
+        current_user.id
+    )
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -86,9 +89,6 @@ async def start_search(
     # Update search history with job ID
     search_history.job_id = job.id
     await db.commit()
-
-    # Increment usage counter
-    await usage_tracker.increment_user_search(current_user.id)
 
     logger.info(
         f"Search started for user: {current_user.email}",
@@ -226,8 +226,7 @@ async def get_saved_opportunities(
 @router.put("/saved/{opportunity_id}", response_model=SavedOpportunityResponse)
 async def update_saved_opportunity(
     opportunity_id: str,
-    user_notes: str = None,
-    user_status: str = Query(None, description="Status: saved, pursuing, passed"),
+    body: UpdateSavedOpportunityRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedOpportunity:
@@ -246,15 +245,15 @@ async def update_saved_opportunity(
             detail="Saved opportunity not found",
         )
 
-    if user_notes is not None:
-        saved.user_notes = user_notes
-    if user_status is not None:
-        if user_status not in ["saved", "pursuing", "passed"]:
+    if body.user_notes is not None:
+        saved.user_notes = body.user_notes
+    if body.user_status is not None:
+        if body.user_status not in ["saved", "pursuing", "passed"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid status. Must be: saved, pursuing, or passed",
             )
-        saved.user_status = user_status
+        saved.user_status = body.user_status
 
     await db.commit()
     await db.refresh(saved)

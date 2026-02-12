@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { useAuthStore } from "@/stores/authStore"
-import { authApi, type LoginRequest, type RegisterRequest } from "@/services/api"
+import {
+  authApi,
+  getErrorMessage,
+  type LoginRequest,
+  type RegisterRequest,
+} from "@/services/api"
 import { toast } from "@/components/ui/use-toast"
 
 export function useLogin() {
@@ -10,8 +15,9 @@ export function useLogin() {
 
   return useMutation({
     mutationFn: (data: LoginRequest) => authApi.login(data),
-    onSuccess: (response) => {
-      login(response.user, response.access_token, response.refresh_token)
+    onSuccess: async (response) => {
+      const user = await authApi.me()
+      login(user, response.access_token, response.refresh_token)
       toast({
         title: "Welcome back!",
         description: "You have successfully logged in.",
@@ -37,11 +43,12 @@ export function useRegister() {
       // First register the user
       await authApi.register(data)
       // Then login to get tokens
-      const loginResponse = await authApi.login({
+      const tokenResponse = await authApi.login({
         email: data.email,
         password: data.password,
       })
-      return loginResponse
+      const user = await authApi.me()
+      return { user, ...tokenResponse }
     },
     onSuccess: (response) => {
       login(response.user, response.access_token, response.refresh_token)
@@ -51,8 +58,8 @@ export function useRegister() {
       })
       navigate("/profile")
     },
-    onError: (error: any) => {
-      const message = error?.response?.data?.detail || error.message || "Could not create account"
+    onError: (error: unknown) => {
+      const message = getErrorMessage(error) || "Could not create account"
       toast({
         variant: "destructive",
         title: "Registration failed",

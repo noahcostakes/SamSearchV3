@@ -52,14 +52,14 @@ services:
       target: production
     container_name: samsearch-backend-prod
     environment:
-      - APP_ENV=production
+      - ENVIRONMENT=production
       - DEBUG=false
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - SECRET_KEY=${SECRET_KEY}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CORS_ORIGINS=${CORS_ORIGINS}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,11 +83,11 @@ services:
     container_name: samsearch-celery-worker-prod
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
     environment:
-      - APP_ENV=production
+      - ENVIRONMENT=production
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - SECRET_KEY=${SECRET_KEY}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     depends_on:
       postgres:
@@ -112,10 +112,10 @@ services:
     container_name: samsearch-celery-beat-prod
     command: celery -A app.tasks.celery_app beat --loglevel=info
     environment:
-      - APP_ENV=production
+      - ENVIRONMENT=production
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     depends_on:
       - celery-worker
     networks:

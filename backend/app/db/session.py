@@ -1,5 +1,5 @@
 """Database session management."""
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -43,6 +43,11 @@ async def get_redis() -> Redis:
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            socket_timeout=settings.REDIS_SOCKET_TIMEOUT_SECONDS,
+            socket_connect_timeout=settings.REDIS_SOCKET_TIMEOUT_SECONDS,
+            retry_on_timeout=True,
+            health_check_interval=settings.REDIS_HEALTH_CHECK_INTERVAL_SECONDS,
         )
     return _redis_client
 
@@ -51,5 +56,5 @@ async def close_redis() -> None:
     """Close Redis connection."""
     global _redis_client
     if _redis_client is not None:
-        await _redis_client.close()
+        await _redis_client.aclose()
         _redis_client = None

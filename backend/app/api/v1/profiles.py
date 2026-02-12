@@ -85,10 +85,9 @@ async def update_profile(
         # Apply defaults for required fields if not provided
         defaults = {
             "company_name": "My Company",
-            "employee_count": 1,
-            "headquarters_state": "CA",
             "primary_naics": "541511",  # Custom Computer Programming Services
             "core_competencies": ["General Services"],
+            "clearance_level": "None",
         }
         for key, value in defaults.items():
             if key not in create_data or create_data[key] is None:

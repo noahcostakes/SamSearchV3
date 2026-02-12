@@ -1,47 +1,40 @@
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import {
-  Search,
-  Filter,
-  ExternalLink,
   Bookmark,
   BookmarkCheck,
-  Clock,
   Building,
+  Clock,
+  ExternalLink,
+  Filter,
   MapPin,
+  Search,
 } from "lucide-react"
 
+import { PageHeader } from "@/components/layout"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { EmptyState } from "@/components/ui/EmptyState"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
+import { SectionCard } from "@/components/ui/SectionCard"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useProfile, useSAMKeyStatus } from "@/hooks/useProfile"
 import {
-  useStartSearch,
-  useSearchResults,
   useSaveOpportunity,
   useSearchHistory,
+  useSearchHistoryDetails,
+  useSearchResults,
+  useStartSearch,
 } from "@/hooks/useSearch"
-import { useProfile, useSAMKeyStatus } from "@/hooks/useProfile"
-import type { Opportunity, SearchHistory } from "@/types"
+import { getOpportunityRelevance, selectTopDisplayedOpportunities } from "@/pages/searchResults"
 import { NOTICE_TYPES, SET_ASIDE_TYPES } from "@/types"
+import type { Opportunity, SearchHistory } from "@/types"
 
 const searchSchema = z.object({
   keywords: z.string().optional(),
@@ -51,53 +44,46 @@ const searchSchema = z.object({
   place_of_performance_state: z.string().optional(),
   posted_from: z.string().optional(),
   posted_to: z.string().optional(),
+  days_back: z.coerce.number().int().min(1).max(365).default(30),
 })
 
 type SearchFormData = z.infer<typeof searchSchema>
 
 export function SearchPage() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [selectedSearchId, setSelectedSearchId] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
 
   const { data: profile } = useProfile()
   const { data: samKeyStatus } = useSAMKeyStatus()
-  const { data: searchHistory } = useSearchHistory(1, 10)
+  const { data: searchHistory } = useSearchHistory(10, 0)
+  const { data: selectedSearch } = useSearchHistoryDetails(selectedSearchId)
   const startSearchMutation = useStartSearch()
   const { data: searchResults, isLoading: resultsLoading } = useSearchResults(currentJobId)
   const saveOpportunityMutation = useSaveOpportunity()
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-  } = useForm<SearchFormData>({
+  const { register, handleSubmit, setValue, watch } = useForm<SearchFormData>({
     resolver: zodResolver(searchSchema),
     defaultValues: {
       naics_codes: profile?.primary_naics ? [profile.primary_naics, ...(profile.secondary_naics || [])] : [],
+      days_back: 30,
     },
   })
 
   const onSubmit = async (data: SearchFormData) => {
     const result = await startSearchMutation.mutateAsync({
-      keywords: data.keywords,
-      naics_codes: data.naics_codes?.filter(Boolean),
-      ptype: data.ptype || undefined,
-      type_of_set_aside: data.type_of_set_aside || undefined,
-      place_of_performance_state: data.place_of_performance_state || undefined,
-      posted_from: data.posted_from || undefined,
-      posted_to: data.posted_to || undefined,
+      days_back: data.days_back ?? 30,
     })
     setCurrentJobId(result.job_id)
+    setSelectedSearchId(result.search_id)
   }
 
   const handleSave = (opportunity: Opportunity) => {
     saveOpportunityMutation.mutate({
       notice_id: opportunity.noticeId,
-      title: opportunity.title,
-      agency: opportunity.department,
-      posted_date: opportunity.postedDate,
-      response_deadline: opportunity.responseDeadLine,
+      relevance_score: opportunity.score?.relevance ?? 0,
+      ai_analysis: opportunity.score,
+      recommendation: opportunity.score?.recommendation,
       opportunity_data: opportunity,
     })
   }
@@ -108,241 +94,245 @@ export function SearchPage() {
     return "outline"
   }
 
+  const displayedOpportunities = selectTopDisplayedOpportunities(searchResults, selectedSearch ?? undefined)
+  const totalRecords =
+    searchResults?.status === "complete" ? searchResults.results?.totalRecords : selectedSearch?.results?.totalRecords
+
   if (!samKeyStatus?.has_key) {
     return (
-      <div className="space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Search Opportunities</h1>
-          <p className="text-muted-foreground mt-1">
-            AI-powered search across SAM.gov contracts
-          </p>
-        </div>
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Search className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">SAM.gov API Key Required</h3>
-            <p className="text-muted-foreground text-center max-w-md mb-4">
-              To search for opportunities, please add your SAM.gov API key in Settings.
-            </p>
-            <Button asChild>
-              <a href="/settings">Go to Settings</a>
-            </Button>
-          </CardContent>
-        </Card>
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow="Opportunity Discovery"
+          title="Search Opportunities"
+          description="AI-powered matching across current SAM.gov opportunities."
+        />
+        <SectionCard title="SAM.gov API key required" description="Add your key before running quick search.">
+          <EmptyState
+            icon={<Search className="h-10 w-10" />}
+            title="Connect your SAM.gov account"
+            description="To run a search, add your SAM.gov API key in Settings."
+            action={
+              <Button asChild>
+                <Link to="/settings">Go to settings</Link>
+              </Button>
+            }
+          />
+        </SectionCard>
       </div>
     )
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Search Opportunities</h1>
-        <p className="text-muted-foreground mt-1">
-          AI-powered search across SAM.gov contracts
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Opportunity Discovery"
+        title="Search Opportunities"
+        description="Run a quick search and review your top-ranked opportunities."
+      />
 
-      <Tabs defaultValue="search">
-        <TabsList>
+      <Tabs defaultValue="search" className="space-y-4">
+        <TabsList className="grid h-11 w-full max-w-md grid-cols-2 rounded-lg">
           <TabsTrigger value="search">New Search</TabsTrigger>
           <TabsTrigger value="history">Search History</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="search" className="space-y-6">
-          {/* Search Form */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Search className="h-5 w-5" />
-                Search SAM.gov
-              </CardTitle>
-              <CardDescription>
-                Enter keywords and filters to find matching opportunities
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                <div className="flex gap-4">
-                  <div className="flex-1">
-                    <Input
-                      placeholder="Search keywords (e.g., IT support, cloud migration)..."
-                      {...register("keywords")}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowFilters(!showFilters)}
-                  >
+        <TabsContent value="search" className="space-y-4">
+          <SectionCard title="Search controls" description="Quick search currently uses profile context and Days Back.">
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+              <div className="flex flex-col gap-3 lg:flex-row">
+                <Input
+                  placeholder="Keywords (example: cloud migration, cyber operations)"
+                  className="flex-1"
+                  {...register("keywords")}
+                />
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => setShowFilters((prev) => !prev)}>
                     <Filter className="mr-2 h-4 w-4" />
-                    Filters
+                    {showFilters ? "Hide Filters" : "Filters"}
                   </Button>
                   <Button type="submit" disabled={startSearchMutation.isPending}>
                     {startSearchMutation.isPending ? (
-                      <Spinner size="sm" className="mr-2" />
+                      <>
+                        <Spinner size="sm" className="mr-2" />
+                        Starting...
+                      </>
                     ) : (
-                      <Search className="mr-2 h-4 w-4" />
+                      <>
+                        <Search className="mr-2 h-4 w-4" />
+                        Search
+                      </>
                     )}
-                    Search
                   </Button>
                 </div>
+              </div>
 
-                {showFilters && (
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 pt-4 border-t">
-                    <div className="space-y-2">
-                      <Label>Notice Type</Label>
-                      <Select
-                        onValueChange={(value) => setValue("ptype", value)}
-                        value={watch("ptype")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="All types" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="">All types</SelectItem>
-                          {NOTICE_TYPES.map((type) => (
-                            <SelectItem key={type.code} value={type.code}>
-                              {type.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Set-Aside</Label>
-                      <Select
-                        onValueChange={(value) => setValue("type_of_set_aside", value)}
-                        value={watch("type_of_set_aside")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="All set-asides" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="">All set-asides</SelectItem>
-                          {SET_ASIDE_TYPES.map((type) => (
-                            <SelectItem key={type.code} value={type.code}>
-                              {type.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Posted From</Label>
-                      <Input
-                        type="date"
-                        {...register("posted_from")}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Posted To</Label>
-                      <Input
-                        type="date"
-                        {...register("posted_to")}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>NAICS Codes</Label>
-                      <Input
-                        placeholder="541512, 541511"
-                        onChange={(e) => {
-                          const codes = e.target.value.split(",").map((c) => c.trim())
-                          setValue("naics_codes", codes)
-                        }}
-                        defaultValue={profile?.primary_naics ? [profile.primary_naics, ...(profile.secondary_naics || [])].join(", ") : ""}
-                      />
-                    </div>
-                  </div>
-                )}
-              </form>
-            </CardContent>
-          </Card>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="days_back">Days back</Label>
+                  <Input id="days_back" type="number" min={1} max={365} {...register("days_back")} />
+                </div>
+              </div>
 
-          {/* Search Status */}
-          {currentJobId && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Search Status</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {resultsLoading || searchResults?.status === "pending" || searchResults?.status === "processing" || searchResults?.status === "searching" || searchResults?.status === "scoring" ? (
-                  <div className="flex items-center gap-4">
-                    <Spinner />
-                    <div>
-                      <p className="font-medium">
-                        {searchResults?.status === "searching" ? "Searching SAM.gov..." : 
-                         searchResults?.status === "scoring" ? "Scoring opportunities with AI..." : 
-                         "Processing..."}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        This may take a moment as we search and score opportunities.
-                      </p>
-                    </div>
+              {showFilters ? (
+                <div className="grid gap-4 border-t border-border/60 pt-4 md:grid-cols-2 lg:grid-cols-3">
+                  <p className="md:col-span-2 lg:col-span-3 text-sm text-muted-foreground">
+                    Advanced filters are preview-only right now. Current quick search uses your profile and Days Back.
+                  </p>
+                  <div className="space-y-2">
+                    <Label>Notice type</Label>
+                    <Select onValueChange={(value) => setValue("ptype", value)} value={watch("ptype")}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">All types</SelectItem>
+                        {NOTICE_TYPES.map((type) => (
+                          <SelectItem key={type.code} value={type.code}>
+                            {type.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                ) : searchResults?.status === "complete" ? (
-                  <div className="text-green-600">
-                    ✓ Search complete! Found {searchResults.results?.opportunities?.length || 0} opportunities.
+                  <div className="space-y-2">
+                    <Label>Set-aside</Label>
+                    <Select onValueChange={(value) => setValue("type_of_set_aside", value)} value={watch("type_of_set_aside")}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All set-asides" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">All set-asides</SelectItem>
+                        {SET_ASIDE_TYPES.map((type) => (
+                          <SelectItem key={type.code} value={type.code}>
+                            {type.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                ) : searchResults?.status === "failed" ? (
-                  <div className="text-red-600">
-                    ✗ Search failed: {searchResults.error || "Unknown error"}
+                  <div className="space-y-2">
+                    <Label>Posted from</Label>
+                    <Input type="date" {...register("posted_from")} />
                   </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          )}
+                  <div className="space-y-2">
+                    <Label>Posted to</Label>
+                    <Input type="date" {...register("posted_to")} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>NAICS codes</Label>
+                    <Input
+                      placeholder="541512, 541511"
+                      defaultValue={
+                        profile?.primary_naics
+                          ? [profile.primary_naics, ...(profile.secondary_naics || [])].join(", ")
+                          : ""
+                      }
+                      onChange={(event) => {
+                        const codes = event.target.value
+                          .split(",")
+                          .map((code) => code.trim())
+                          .filter(Boolean)
+                        setValue("naics_codes", codes)
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </form>
+          </SectionCard>
 
-          {/* Results */}
-          {searchResults?.results?.opportunities && searchResults.results.opportunities.length > 0 && (
-            <div className="space-y-4">
-              <h2 className="text-xl font-semibold">
-                Results ({searchResults.results.opportunities.length})
-              </h2>
-              {searchResults.results.opportunities.map((opportunity: Opportunity) => (
-                <OpportunityCard
-                  key={opportunity.noticeId}
-                  opportunity={opportunity}
-                  onSave={() => handleSave(opportunity)}
-                  getScoreColor={getScoreColor}
-                />
-              ))}
-            </div>
-          )}
+          {currentJobId ? (
+            <SectionCard title="Search status" description="Background search and scoring progress.">
+              {resultsLoading ||
+              searchResults?.status === "pending" ||
+              searchResults?.status === "processing" ||
+              searchResults?.status === "searching" ||
+              searchResults?.status === "scoring" ? (
+                <div className="flex items-center gap-3">
+                  <Spinner />
+                  <div>
+                    <p className="font-semibold">
+                      {searchResults?.status === "searching"
+                        ? "Searching SAM.gov..."
+                        : searchResults?.status === "scoring"
+                        ? "Scoring opportunities with AI..."
+                        : "Processing..."}
+                    </p>
+                    <p className="text-sm text-muted-foreground">This can take a moment for larger result sets.</p>
+                  </div>
+                </div>
+              ) : searchResults?.status === "complete" ? (
+                displayedOpportunities.length > 0 ? (
+                  <p className="font-medium text-emerald-700">
+                    Search complete. Showing top {displayedOpportunities.length} best matches
+                    {typeof totalRecords === "number" && totalRecords > displayedOpportunities.length
+                      ? ` from ${totalRecords} total opportunities.`
+                      : "."}
+                  </p>
+                ) : (
+                  <p className="font-medium text-amber-700">
+                    Search complete, but no opportunities matched this profile window. Try increasing Days back or
+                    broadening NAICS/keywords in your profile.
+                  </p>
+                )
+              ) : searchResults?.status === "failed" ? (
+                <p className="font-medium text-destructive">
+                  Search failed: {searchResults.error || "Unknown error"}
+                </p>
+              ) : null}
+            </SectionCard>
+          ) : null}
+
+          {displayedOpportunities.length > 0 ? (
+            <section className="space-y-3">
+              <h2 className="font-display text-2xl">Results ({displayedOpportunities.length})</h2>
+              <div className="space-y-3">
+                {displayedOpportunities.map((opportunity) => (
+                  <OpportunityCard
+                    key={opportunity.noticeId}
+                    opportunity={opportunity}
+                    onSave={() => handleSave(opportunity)}
+                    getScoreColor={getScoreColor}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
         </TabsContent>
 
-        <TabsContent value="history" className="space-y-4">
-          {searchHistory?.items?.length ? (
-            searchHistory.items.map((search: SearchHistory) => (
-              <Card key={search.id}>
-                <CardContent className="flex items-center justify-between py-4">
-                  <div>
-                    <p className="font-medium">
-                      Search #{search.id.slice(0, 8)}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      {new Date(search.created_at).toLocaleString()}
-                    </p>
+        <TabsContent value="history">
+          <SectionCard title="Search history" description="Open previous searches and review cached top matches.">
+            {searchHistory?.length ? (
+              <div className="space-y-2">
+                {searchHistory.map((search: SearchHistory) => (
+                  <div
+                    key={search.id}
+                    className="flex flex-col gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <p className="font-semibold">Search #{search.id.slice(0, 8)}</p>
+                      <p className="text-sm text-muted-foreground">{new Date(search.created_at).toLocaleString()}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline">{search.total_results} results</Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setCurrentJobId(null)
+                          setSelectedSearchId(search.id)
+                        }}
+                      >
+                        View Results
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <Badge variant="outline">{search.total_results} results</Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentJobId(search.id)}
-                    >
-                      View Results
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <Card>
-              <CardContent className="py-8 text-center text-muted-foreground">
-                No search history yet. Start a new search above.
-              </CardContent>
-            </Card>
-          )}
+                ))}
+              </div>
+            ) : (
+              <EmptyState title="No history yet" description="Run your first search to build your activity history." />
+            )}
+          </SectionCard>
         </TabsContent>
       </Tabs>
     </div>
@@ -357,93 +347,64 @@ interface OpportunityCardProps {
 }
 
 function OpportunityCard({ opportunity, onSave, getScoreColor, isSaved = false }: OpportunityCardProps) {
-  const samUrl = opportunity.solicitationNumber 
-    ? `https://sam.gov/opp/${opportunity.noticeId}/view` 
-    : `https://sam.gov/opp/${opportunity.noticeId}/view`
-    
+  const relevance = getOpportunityRelevance(opportunity)
+  const samUrl = `https://sam.gov/opp/${opportunity.noticeId}/view`
+
   return (
-    <Card className="hover:border-primary/50 transition-colors">
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start gap-3">
-              <h3 className="font-semibold text-lg line-clamp-2">
-                {opportunity.title}
-              </h3>
-              {opportunity.score && (
-                <Badge variant={getScoreColor(opportunity.score.relevance)}>
-                  {opportunity.score.relevance}% Match
-                </Badge>
-              )}
-            </div>
-
-            <div className="flex flex-wrap gap-4 mt-3 text-sm text-muted-foreground">
-              <div className="flex items-center gap-1">
-                <Building className="h-4 w-4" />
-                {opportunity.department || opportunity.office || "Unknown Agency"}
-              </div>
-              {opportunity.placeOfPerformance && (
-                <div className="flex items-center gap-1">
-                  <MapPin className="h-4 w-4" />
-                  {opportunity.placeOfPerformance.city}, {opportunity.placeOfPerformance.state}
-                </div>
-              )}
-              {opportunity.responseDeadLine && (
-                <div className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
-                  Due: {new Date(opportunity.responseDeadLine).toLocaleDateString()}
-                </div>
-              )}
-              {opportunity.naicsCode && (
-                <Badge variant="outline">NAICS: {opportunity.naicsCode}</Badge>
-              )}
-              {opportunity.typeOfSetAsideDescription && (
-                <Badge variant="outline">{opportunity.typeOfSetAsideDescription}</Badge>
-              )}
-            </div>
-
-            {opportunity.description && (
-              <p className="mt-3 text-sm text-muted-foreground line-clamp-2">
-                {opportunity.description}
-              </p>
-            )}
-
-            {opportunity.score && (
-              <div className="mt-3 p-3 bg-muted/50 rounded-lg">
-                <p className="text-sm font-medium mb-1">AI Analysis:</p>
-                <p className="text-sm text-muted-foreground">
-                  {opportunity.score.reasoning}
-                </p>
-              </div>
-            )}
+    <SectionCard className="hover:border-primary/45" contentClassName="p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start gap-2">
+            <h3 className="font-semibold text-lg leading-snug">{opportunity.title}</h3>
+            <Badge variant={getScoreColor(relevance)}>{relevance}% Match</Badge>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={onSave}
-              title={isSaved ? "Saved" : "Save opportunity"}
-            >
-              {isSaved ? (
-                <BookmarkCheck className="h-4 w-4 text-primary" />
-              ) : (
-                <Bookmark className="h-4 w-4" />
-              )}
-            </Button>
-            <Button variant="outline" size="icon" asChild>
-              <a
-                href={samUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="View on SAM.gov"
-              >
-                <ExternalLink className="h-4 w-4" />
-              </a>
-            </Button>
+          <div className="mt-3 flex flex-wrap gap-3 text-sm text-muted-foreground">
+            <div className="inline-flex items-center gap-1.5">
+              <Building className="h-4 w-4" />
+              {opportunity.department || opportunity.office || "Unknown Agency"}
+            </div>
+            {opportunity.placeOfPerformance ? (
+              <div className="inline-flex items-center gap-1.5">
+                <MapPin className="h-4 w-4" />
+                {opportunity.placeOfPerformance.city}, {opportunity.placeOfPerformance.state}
+              </div>
+            ) : null}
+            {opportunity.responseDeadLine ? (
+              <div className="inline-flex items-center gap-1.5">
+                <Clock className="h-4 w-4" />
+                Due: {new Date(opportunity.responseDeadLine).toLocaleDateString()}
+              </div>
+            ) : null}
+            {opportunity.naicsCode ? <Badge variant="outline">NAICS: {opportunity.naicsCode}</Badge> : null}
+            {opportunity.typeOfSetAsideDescription ? (
+              <Badge variant="outline">{opportunity.typeOfSetAsideDescription}</Badge>
+            ) : null}
           </div>
+
+          {opportunity.description ? (
+            <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{opportunity.description}</p>
+          ) : null}
+
+          {opportunity.score ? (
+            <div className="mt-3 rounded-lg border border-border/60 bg-muted/25 p-3">
+              <p className="text-sm font-semibold">AI Analysis</p>
+              <p className="mt-1 text-sm text-muted-foreground">{opportunity.score.reasoning}</p>
+            </div>
+          ) : null}
         </div>
-      </CardContent>
-    </Card>
+
+        <div className="flex shrink-0 flex-col gap-2">
+          <Button variant="outline" size="icon" onClick={onSave} title={isSaved ? "Saved" : "Save opportunity"}>
+            {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
+          </Button>
+          <Button variant="outline" size="icon" asChild>
+            <a href={samUrl} target="_blank" rel="noopener noreferrer" title="View on SAM.gov">
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          </Button>
+        </div>
+      </div>
+    </SectionCard>
   )
 }

@@ -17,6 +17,7 @@ class TestAuthEndpoints:
         assert "id" in data
         assert data["is_active"] is True
         assert data["is_verified"] is False
+        assert data["has_sam_api_key"] is False
 
     @pytest.mark.asyncio
     async def test_register_duplicate_email(self, client: AsyncClient, user_data: dict):
@@ -39,6 +40,33 @@ class TestAuthEndpoints:
         )
 
         assert response.status_code == 422  # Validation error
+
+    @pytest.mark.asyncio
+    async def test_register_password_no_uppercase(self, client: AsyncClient):
+        """Test registration fails when password lacks uppercase letter."""
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "test@example.com", "password": "alllowercase1"},
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_register_password_no_digit(self, client: AsyncClient):
+        """Test registration fails when password lacks a digit."""
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "test@example.com", "password": "NoDigitsHere"},
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_register_password_no_lowercase(self, client: AsyncClient):
+        """Test registration fails when password lacks lowercase letter."""
+        response = await client.post(
+            "/api/v1/auth/register",
+            json={"email": "test@example.com", "password": "ALLUPPER123"},
+        )
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_login_success(self, client: AsyncClient, user_data: dict):
@@ -147,3 +175,43 @@ class TestAuthEndpoints:
         data = response.json()
         assert "access_token" in data
         assert "refresh_token" in data
+
+
+class TestAuthRateLimiting:
+    """Test authentication rate limiting."""
+
+    @pytest.mark.asyncio
+    async def test_register_rate_limit(self, client: AsyncClient):
+        """Test that registration is rate-limited after too many attempts."""
+        # Make 6 registration attempts (limit is 5 per 15 min window)
+        for i in range(6):
+            response = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": f"user{i}@example.com",
+                    "password": "SecurePass123!",
+                },
+            )
+            if i < 5:
+                # First 5 should succeed (201) or fail for other reasons
+                assert response.status_code in (201, 400, 422)
+            else:
+                # 6th should be rate-limited
+                assert response.status_code == 429
+
+    @pytest.mark.asyncio
+    async def test_login_rate_limit(self, client: AsyncClient, user_data: dict):
+        """Test that login is rate-limited after too many attempts."""
+        # Register a user first
+        await client.post("/api/v1/auth/register", json=user_data)
+
+        # Make 11 login attempts (limit is 10 per 15 min window)
+        for i in range(11):
+            response = await client.post(
+                "/api/v1/auth/login",
+                json={"email": user_data["email"], "password": "WrongPass123!"},
+            )
+            if i < 10:
+                assert response.status_code in (200, 401)
+            else:
+                assert response.status_code == 429

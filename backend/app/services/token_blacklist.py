@@ -74,7 +74,7 @@ class TokenBlacklist:
         # Check if user logged out after token was issued
         if token_iat:
             user_logout_time = await self.get_user_logout_time(user_id)
-            if user_logout_time and token_iat < user_logout_time:
+            if user_logout_time and token_iat <= user_logout_time:
                 return False
 
         return True

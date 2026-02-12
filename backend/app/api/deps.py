@@ -1,5 +1,5 @@
 """API dependencies for authentication and database access."""
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, HTTPException, status

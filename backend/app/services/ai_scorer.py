@@ -1,5 +1,6 @@
 """AI-powered opportunity scoring using Claude or local Ollama models."""
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List
 
 import httpx
@@ -8,6 +9,9 @@ from app.config import settings
 from app.core.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Max parallel AI calls — balances throughput vs. API rate limits
+_MAX_SCORING_WORKERS = 5
 
 
 class AIScorer:
@@ -178,24 +182,30 @@ Respond ONLY with valid JSON:
             "key_requirements": [],
         }
 
+    def _get_http_client(self) -> httpx.Client:
+        """Get or create a reusable HTTP client for Ollama calls."""
+        if not hasattr(self, "_http_client") or self._http_client.is_closed:
+            self._http_client = httpx.Client(timeout=120.0)
+        return self._http_client
+
     def _call_ollama(self, prompt: str) -> str:
         """Call local Ollama model."""
         try:
-            with httpx.Client(timeout=120.0) as client:
-                response = client.post(
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": self.ollama_model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.3,
-                            "num_predict": 2000,
-                        }
+            client = self._get_http_client()
+            response = client.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.3,
+                        "num_predict": 2000,
                     }
-                )
-                response.raise_for_status()
-                return response.json().get("response", "")
+                }
+            )
+            response.raise_for_status()
+            return response.json().get("response", "")
         except Exception as e:
             logger.error(f"Ollama call failed: {e}")
             raise
@@ -207,7 +217,11 @@ Respond ONLY with valid JSON:
             max_tokens=self.max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        return message.content[0].text
+        for block in message.content:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                return text
+        raise ValueError("Claude response did not include text content")
 
     def score_opportunity(
         self,
@@ -253,7 +267,7 @@ Respond ONLY with valid JSON:
         max_to_score: int = 50,
     ) -> List[Dict[str, Any]]:
         """
-        Score multiple opportunities.
+        Score multiple opportunities in parallel.
 
         Args:
             profile: Company profile
@@ -263,18 +277,31 @@ Respond ONLY with valid JSON:
         Returns:
             List of opportunities with scores added
         """
-        scored = []
-
         # Limit number to score
         to_score = opportunities[:max_to_score]
 
-        for i, opp in enumerate(to_score):
+        logger.info(
+            f"Scoring {len(to_score)} opportunities with {_MAX_SCORING_WORKERS} workers"
+        )
+
+        # Score in parallel using a thread pool
+        scored: List[Dict[str, Any]] = [{}] * len(to_score)  # pre-allocate
+
+        def _score_one(index: int, opp: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
             logger.info(
-                f"Scoring opportunity {i + 1}/{len(to_score)}",
+                f"Scoring opportunity {index + 1}/{len(to_score)}",
                 extra={"notice_id": opp.get("noticeId")},
             )
-            scored_opp = self.score_opportunity(profile, opp)
-            scored.append(scored_opp)
+            return index, self.score_opportunity(profile, opp)
+
+        with ThreadPoolExecutor(max_workers=_MAX_SCORING_WORKERS) as executor:
+            futures = {
+                executor.submit(_score_one, i, opp): i
+                for i, opp in enumerate(to_score)
+            }
+            for future in as_completed(futures):
+                idx, scored_opp = future.result()
+                scored[idx] = scored_opp
 
         # Add remaining without scoring
         for opp in opportunities[max_to_score:]:

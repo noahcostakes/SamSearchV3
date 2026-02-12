@@ -1,7 +1,5 @@
 """Tests for security utilities."""
-from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from app.core.security import (
     create_access_token,

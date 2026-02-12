@@ -1,15 +1,14 @@
 """Background tasks for opportunity scoring."""
 import asyncio
-from typing import Any, Dict
+from typing import Any
 
 from celery import Task
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.core.encryption import encryption
 from app.core.logging_config import get_logger
-from app.db.base import Base
 from app.models.profile import CompanyProfile
 from app.models.search import SearchHistory
 from app.models.user import User
@@ -17,16 +16,51 @@ from app.services.ai_scorer import AIScorer
 from app.services.sam_client import SAMClient, SAMClientError
 from app.tasks.celery_app import celery_app
 
-# Create sync engine for Celery workers
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 logger = get_logger(__name__)
 
 # Convert async URL to sync for Celery
 sync_db_url = settings.DATABASE_URL.replace("+asyncpg", "")
 sync_engine = create_engine(sync_db_url, pool_size=5)
 SyncSession = sessionmaker(sync_engine)
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    """Safely coerce scoring values to integers for deterministic ordering."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def rank_scored_opportunities(
+    opportunities: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Rank opportunities by best match with deterministic tie-breaking.
+
+    Order:
+    1) score.relevance desc
+    2) score.confidence desc
+    3) noticeId asc (stable string tiebreak)
+    """
+    return sorted(
+        opportunities,
+        key=lambda opp: (
+            -_to_int((opp.get("score") or {}).get("relevance"), 0),
+            -_to_int((opp.get("score") or {}).get("confidence"), 0),
+            str(opp.get("noticeId") or ""),
+        ),
+    )
+
+
+def select_top_matches(
+    opportunities: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return the top N best-ranked opportunities."""
+    if limit <= 0:
+        return []
+    return rank_scored_opportunities(opportunities)[:limit]
 
 
 class CallbackTask(Task):
@@ -41,14 +75,22 @@ class CallbackTask(Task):
         logger.error(f"Task {task_id} failed: {exc}")
 
 
-@celery_app.task(base=CallbackTask, bind=True, name="tasks.score_opportunities")
+@celery_app.task(
+    base=CallbackTask,
+    bind=True,
+    name="tasks.score_opportunities",
+    autoretry_for=(SAMClientError,),
+    retry_backoff=True,
+    retry_jitter=True,
+    max_retries=2,
+)
 def score_opportunities_task(
     self,
     user_id: str,
     profile_id: str,
     search_history_id: str,
     days_back: int = 30,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Background task to search SAM.gov and score opportunities with AI.
 
@@ -80,7 +122,13 @@ def score_opportunities_task(
         if not user.sam_api_key_encrypted:
             raise ValueError("No SAM.gov API key configured")
 
-        sam_api_key = encryption.decrypt(user.sam_api_key_encrypted)
+        try:
+            sam_api_key = encryption.decrypt(user.sam_api_key_encrypted)
+        except ValueError as exc:
+            raise ValueError(
+                "Unable to decrypt stored SAM.gov API key. "
+                "Please re-save your API key in Settings."
+            ) from exc
 
         # Build profile dict for search
         profile_dict = {
@@ -116,15 +164,11 @@ def score_opportunities_task(
             finally:
                 await sam_client.close()
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            results = loop.run_until_complete(do_search())
-        finally:
-            loop.close()
+        results = asyncio.run(do_search())
 
         opportunities = results.get("opportunitiesData", [])
         total_records = results.get("totalRecords", 0)
+        search_metadata = results.get("searchMetadata")
 
         self.update_state(
             state="SCORING",
@@ -136,13 +180,14 @@ def score_opportunities_task(
         if opportunities:
             ai_scorer = AIScorer()
             scored_opportunities = ai_scorer.score_opportunities(
-                profile_dict, opportunities
+                profile_dict,
+                opportunities,
+                max_to_score=settings.AI_SCORING_CANDIDATE_LIMIT,
             )
-
-            # Sort by relevance score
-            scored_opportunities.sort(
-                key=lambda x: x.get("score", {}).get("relevance", 0), reverse=True
-            )
+        top_matches = select_top_matches(
+            scored_opportunities,
+            settings.QUICK_SEARCH_RESULT_LIMIT,
+        )
 
         # Calculate relevance counts
         high_count = sum(
@@ -166,8 +211,9 @@ def score_opportunities_task(
         search_history.job_status = "complete"
         search_history.cached_results = {
             "totalRecords": total_records,
-            "opportunities": scored_opportunities[:100],  # Cache top 100
+            "opportunities": top_matches,
             "searchParams": {"days_back": days_back},
+            "searchMetadata": search_metadata,
         }
         db.commit()
 
@@ -175,33 +221,51 @@ def score_opportunities_task(
 
         return {
             "totalRecords": total_records,
-            "opportunities": scored_opportunities,
+            "opportunities": top_matches,
             "searchParams": {"days_back": days_back},
+            "searchMetadata": search_metadata,
             "high_relevance_count": high_count,
             "medium_relevance_count": medium_count,
             "low_relevance_count": low_count,
         }
 
     except SAMClientError as e:
-        logger.error(f"SAM.gov error in task: {e}")
-        # Update search history with error
-        search_history = db.execute(
-            select(SearchHistory).where(SearchHistory.id == search_history_id)
-        ).scalar_one_or_none()
-        if search_history:
-            search_history.job_status = "failed"
-            db.commit()
+        retries_used = int(getattr(self.request, "retries", 0))
+        max_retries = int(getattr(self, "max_retries", 0) or 0)
+        retries_exhausted = retries_used >= max_retries
+
+        if retries_exhausted:
+            logger.error(
+                "SAM.gov task failed after retries exhausted",
+                extra={"retries": retries_used, "error": str(e)},
+            )
+            # Update search history with terminal failure
+            search_history_record = db.execute(
+                select(SearchHistory).where(SearchHistory.id == search_history_id)
+            ).scalar_one_or_none()
+            if search_history_record:
+                search_history_record.job_status = "failed"
+                db.commit()
+        else:
+            logger.warning(
+                "SAM.gov task attempt failed; retrying",
+                extra={
+                    "attempt": retries_used + 1,
+                    "max_retries": max_retries,
+                    "error": str(e),
+                },
+            )
         raise
 
     except Exception as e:
         logger.exception(f"Scoring task failed: {e}")
         # Update search history with error
         try:
-            search_history = db.execute(
+            search_history_record = db.execute(
                 select(SearchHistory).where(SearchHistory.id == search_history_id)
             ).scalar_one_or_none()
-            if search_history:
-                search_history.job_status = "failed"
+            if search_history_record:
+                search_history_record.job_status = "failed"
                 db.commit()
         except Exception:
             pass

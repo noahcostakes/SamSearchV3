@@ -8,7 +8,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from redis.asyncio import Redis
 
-from app.config import settings
 from app.db.base import Base
 from app.db.session import get_db, get_redis
 from app.main import app
@@ -102,20 +101,25 @@ def profile_data() -> dict:
     """Sample profile data."""
     return {
         "company_name": "Test Company LLC",
-        "employee_count": 50,
-        "annual_revenue": 5000000,
-        "headquarters_state": "VA",
+        "cage_code": "1A2B3",
+        "uei_number": "ABC123DEF456",
+        "duns_number": "123456789",
         "primary_naics": "541511",
         "secondary_naics": ["541512", "541519"],
         "core_competencies": ["Software Development", "Cloud Computing"],
         "technical_skills": ["Python", "AWS", "Docker"],
-        "industry_experience_years": 10,
+        "past_performance_keywords": ["cloud migration"],
+        "priority_keywords": ["cybersecurity"],
         "certifications": ["8(a)", "SDVOSB"],
+        "clearance_level": "Secret",
         "target_contract_min": 50000,
         "target_contract_max": 1000000,
         "preferred_agencies": ["DoD", "VA"],
         "service_area": ["VA", "MD", "DC"],
         "max_response_days": 14,
+        "contract_types_preference": ["FFP", "IDIQ"],
+        "open_to_subcontracting": True,
+        "open_to_prime_contracting": True,
         "blacklist_keywords": ["construction", "janitorial"],
         "requires_clearance": False,
     }

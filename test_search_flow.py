@@ -58,7 +58,11 @@ class SearchFlowTester:
         
         data = response.json()
         self.token = data["access_token"]
-        self.user_id = data["user"]["id"]
+        me_response = await self.client.get(
+            f"{BASE_URL}/auth/me",
+            headers={"Authorization": f"Bearer {self.token}"},
+        )
+        self.user_id = me_response.json()["id"]
         self.log(f"✓ Logged in successfully (User ID: {self.user_id})", "SUCCESS")
         return True
     
@@ -72,7 +76,7 @@ class SearchFlowTester:
             "secondary_naics": ["541512", "518210"],
             "core_competencies": ["Cloud Migration", "DevOps", "Cybersecurity"],
             "technical_skills": ["AWS", "Azure", "Kubernetes", "Python"],
-            "certifications": ["Small Business"],
+            "certifications": ["8(a)"],
             "service_area": ["VA", "MD"],
             "target_contract_min": 50000,
             "target_contract_max": 5000000,
@@ -83,9 +87,9 @@ class SearchFlowTester:
             "contract_types_preference": ["FFP", "IDIQ"],
             "open_to_subcontracting": True,
             "open_to_prime_contracting": True,
-            "cage_code": "",
-            "uei_number": "",
-            "duns_number": ""
+            "cage_code": "1A2B3",
+            "uei_number": "ABC123DEF456",
+            "duns_number": "123456789"
         }
         
         response = await self.client.put(
@@ -180,7 +184,7 @@ class SearchFlowTester:
             return None
         
         data = response.json()
-        results = data.get("cached_results", {})
+        results = data.get("results", {})
         opportunities = results.get("opportunities", [])
         
         self.log(f"✓ Retrieved results", "SUCCESS")

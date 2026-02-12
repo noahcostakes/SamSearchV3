@@ -1,5 +1,6 @@
 """SAM.gov API client with correct parameter names and date formats."""
 from datetime import datetime, timedelta, timezone
+import inspect
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -114,7 +115,7 @@ class SAMClient:
             params["state"] = state
 
         logger.info(
-            f"Searching SAM.gov",
+            "Searching SAM.gov",
             extra={
                 "posted_from": params["postedFrom"],
                 "posted_to": params["postedTo"],
@@ -124,14 +125,18 @@ class SAMClient:
 
         try:
             response = await self.client.get(self.base_url, params=params)
-            response.raise_for_status()
+            maybe_raise = response.raise_for_status()
+            if inspect.isawaitable(maybe_raise):
+                await maybe_raise
 
             data = response.json()
+            if inspect.isawaitable(data):
+                data = await data
             total_records = data.get("totalRecords", 0)
             opportunities = data.get("opportunitiesData", [])
 
             logger.info(
-                f"SAM.gov search complete",
+                "SAM.gov search complete",
                 extra={"total_records": total_records, "returned": len(opportunities)},
             )
 
@@ -215,55 +220,170 @@ class SAMClient:
         posted_to = datetime.now(timezone.utc)
         posted_from = posted_to - timedelta(days=days_back)
 
-        # Build NAICS list
-        naics_codes = [profile["primary_naics"]]
-        if profile.get("secondary_naics"):
-            naics_codes.extend(profile["secondary_naics"][:4])  # Limit to 5 total
+        # Use at most 3 NAICS codes and query them one-at-a-time. In practice,
+        # comma-joined NAICS constraints can be overly restrictive.
+        naics_candidates: List[str] = []
+        primary_naics = str(profile.get("primary_naics") or "").strip()
+        if primary_naics:
+            naics_candidates.append(primary_naics)
+        for code in profile.get("secondary_naics", []) or []:
+            code_str = str(code).strip()
+            if code_str and code_str not in naics_candidates:
+                naics_candidates.append(code_str)
+            if len(naics_candidates) >= 3:
+                break
 
-        # Determine ptype (opportunity types)
+        # Opportunity types:
         # o=solicitation, p=presolicitation, k=combined synopsis/solicitation
-        ptype = "o,p,k"
+        # r=sources sought, s=special notice
+        strict_ptype = "o,p,k"
+        broad_ptype = "o,p,k,r,s"
 
-        # Build set-aside filter based on certifications
+        # Build set-aside filter based on certifications.
+        certs = set(profile.get("certifications", []) or [])
         set_aside = None
-        certs = profile.get("certifications", [])
         if "8(a)" in certs:
             set_aside = "8A"
         elif "HUBZone" in certs:
             set_aside = "HZC"
-        elif "WOSB" in certs or "EDWOSB" in certs:
+        elif "EDWOSB" in certs:
+            set_aside = "EDWOSB"
+        elif "WOSB" in certs:
             set_aside = "WOSB"
         elif "SDVOSB" in certs:
-            set_aside = "SDVOSB"
+            set_aside = "SDVOSBC"
 
-        # Get state filter from service area
+        # Narrow to state only when exactly one service area is provided.
         state = None
-        service_area = profile.get("service_area", [])
+        service_area = profile.get("service_area", []) or []
         if len(service_area) == 1:
-            state = service_area[0]
-        
-        # Build keywords from priority keywords (highest weight) and past performance
-        keywords = None
-        priority_keywords = profile.get("priority_keywords", [])
-        past_perf_keywords = profile.get("past_performance_keywords", [])
-        
-        # Combine keywords, prioritizing priority_keywords first
-        all_keywords = priority_keywords[:3]  # Take top 3 priority keywords
-        if len(all_keywords) < 3 and past_perf_keywords:
-            # Fill with past performance if we have room
-            all_keywords.extend(past_perf_keywords[:3 - len(all_keywords)])
-        
-        if all_keywords:
-            # Join with OR logic for SAM.gov search
-            keywords = " OR ".join(all_keywords)
-            logger.info(f"Using search keywords: {keywords}")
+            state = str(service_area[0]).strip() or None
 
-        return await self.search(
-            posted_from=posted_from,
-            posted_to=posted_to,
-            naics_codes=naics_codes,
-            keywords=keywords,
-            ptype=ptype,
-            set_aside=set_aside,
-            state=state,
+        # Build keyword seed; use one strong phrase in strict mode and relax later.
+        keyword_candidates: List[str] = []
+        for keyword in (profile.get("priority_keywords", []) or []) + (
+            profile.get("past_performance_keywords", []) or []
+        ):
+            cleaned = str(keyword).strip()
+            if cleaned and cleaned not in keyword_candidates:
+                keyword_candidates.append(cleaned)
+            if len(keyword_candidates) >= 3:
+                break
+        strict_keyword = keyword_candidates[0] if keyword_candidates else None
+
+        fetch_limit = min(
+            500,
+            max(
+                settings.AI_SCORING_CANDIDATE_LIMIT * 2,
+                settings.QUICK_SEARCH_RESULT_LIMIT * 5,
+                50,
+            ),
         )
+
+        attempts: List[Dict[str, Any]] = []
+        if naics_candidates:
+            primary = naics_candidates[0]
+            attempts.extend(
+                [
+                    {
+                        "name": "primary_strict",
+                        "naics_codes": [primary],
+                        "keywords": strict_keyword,
+                        "ptype": strict_ptype,
+                        "set_aside": set_aside,
+                        "state": state,
+                    },
+                    {
+                        "name": "primary_relaxed_keywords",
+                        "naics_codes": [primary],
+                        "keywords": None,
+                        "ptype": broad_ptype,
+                        "set_aside": set_aside,
+                        "state": state,
+                    },
+                    {
+                        "name": "primary_relaxed_all",
+                        "naics_codes": [primary],
+                        "keywords": None,
+                        "ptype": broad_ptype,
+                        "set_aside": None,
+                        "state": None,
+                    },
+                ]
+            )
+
+            for idx, secondary_code in enumerate(naics_candidates[1:], start=1):
+                attempts.append(
+                    {
+                        "name": f"secondary_{idx}_relaxed_all",
+                        "naics_codes": [secondary_code],
+                        "keywords": None,
+                        "ptype": broad_ptype,
+                        "set_aside": None,
+                        "state": None,
+                    }
+                )
+
+        # Last resort: avoid empty quick-search by broadening fully.
+        attempts.append(
+            {
+                "name": "broad_ptype_only",
+                "naics_codes": None,
+                "keywords": None,
+                "ptype": broad_ptype,
+                "set_aside": None,
+                "state": None,
+            }
+        )
+
+        attempt_summaries: List[Dict[str, Any]] = []
+        last_result: Optional[Dict[str, Any]] = None
+
+        for attempt in attempts:
+            result = await self.search(
+                posted_from=posted_from,
+                posted_to=posted_to,
+                naics_codes=attempt["naics_codes"],
+                keywords=attempt["keywords"],
+                ptype=attempt["ptype"],
+                set_aside=attempt["set_aside"],
+                state=attempt["state"],
+                limit=fetch_limit,
+            )
+            last_result = result
+            total_records = int(result.get("totalRecords") or 0)
+            returned_count = len(result.get("opportunitiesData") or [])
+
+            summary = {
+                "strategy": attempt["name"],
+                "naics": (attempt["naics_codes"] or [None])[0],
+                "used_keywords": bool(attempt["keywords"]),
+                "used_set_aside": bool(attempt["set_aside"]),
+                "used_state": bool(attempt["state"]),
+                "total_records": total_records,
+                "returned": returned_count,
+            }
+            attempt_summaries.append(summary)
+
+            logger.info(
+                "Profile search attempt complete",
+                extra=summary,
+            )
+
+            if returned_count > 0:
+                result["searchMetadata"] = {
+                    "strategy": attempt["name"],
+                    "attempts": attempt_summaries,
+                    "fallback_applied": len(attempt_summaries) > 1,
+                }
+                return result
+
+        if last_result is None:
+            last_result = {"totalRecords": 0, "opportunitiesData": []}
+
+        last_result["searchMetadata"] = {
+            "strategy": "no_matches",
+            "attempts": attempt_summaries,
+            "fallback_applied": len(attempt_summaries) > 1,
+        }
+        return last_result

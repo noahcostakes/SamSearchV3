@@ -14,6 +14,10 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["var(--font-sans)"],
+        display: ["var(--font-display)"],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -54,6 +58,10 @@ export default {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      boxShadow: {
+        card: "0 1px 2px hsl(220 45% 14% / 0.06), 0 12px 24px hsl(220 45% 14% / 0.08)",
+        float: "0 20px 40px hsl(220 45% 14% / 0.18)",
+      },
       keyframes: {
         "accordion-down": {
           from: { height: "0" },
@@ -63,10 +71,20 @@ export default {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        "fade-lift": {
+          from: { opacity: "0", transform: "translateY(12px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        "page-enter": {
+          from: { opacity: "0", transform: "translateY(8px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "fade-lift": "fade-lift 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both",
+        "page-enter": "page-enter 300ms cubic-bezier(0.2, 0.8, 0.2, 1) both",
       },
     },
   },

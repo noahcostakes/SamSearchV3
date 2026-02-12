@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { searchApi, type SearchRequest, type SaveOpportunityRequest } from "@/services/api"
+import {
+  searchApi,
+  type SaveOpportunityRequest,
+  type SearchRequest,
+} from "@/services/api"
 import { toast } from "@/components/ui/use-toast"
 
 export function useStartSearch() {
@@ -21,11 +25,21 @@ export function useStartSearch() {
   })
 }
 
-export function useSearchHistory(page: number = 1, limit: number = 10) {
+export function useSearchHistory(limit: number = 10, offset: number = 0) {
   return useQuery({
-    queryKey: ["searchHistory", page, limit],
-    queryFn: () => searchApi.getHistory(page, limit),
+    queryKey: ["searchHistory", limit, offset],
+    queryFn: () => searchApi.getHistory(limit, offset),
     staleTime: 30 * 1000, // 30 seconds
+  })
+}
+
+export function useSearchHistoryDetails(searchId: string | null) {
+  return useQuery({
+    queryKey: ["searchHistoryDetails", searchId],
+    queryFn: () =>
+      searchId ? searchApi.getHistoryById(searchId) : Promise.resolve(null),
+    enabled: !!searchId,
+    staleTime: 10 * 1000,
   })
 }
 
@@ -45,10 +59,10 @@ export function useSearchResults(jobId: string | null) {
   })
 }
 
-export function useSavedOpportunities(page: number = 1, limit: number = 10) {
+export function useSavedOpportunities(limit: number = 50, offset: number = 0) {
   return useQuery({
-    queryKey: ["savedOpportunities", page, limit],
-    queryFn: () => searchApi.getSavedOpportunities(page, limit),
+    queryKey: ["savedOpportunities", limit, offset],
+    queryFn: () => searchApi.getSavedOpportunities(undefined, limit, offset),
     staleTime: 30 * 1000, // 30 seconds
   })
 }

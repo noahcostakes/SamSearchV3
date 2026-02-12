@@ -73,6 +73,15 @@ class SaveOpportunityRequest(BaseModel):
     user_notes: Optional[str] = None
 
 
+class UpdateSavedOpportunityRequest(BaseModel):
+    """Schema for updating a saved opportunity (notes and/or status)."""
+
+    user_notes: Optional[str] = None
+    user_status: Optional[str] = Field(
+        None, description="Status: saved, pursuing, or passed"
+    )
+
+
 class SavedOpportunityResponse(BaseModel):
     """Schema for saved opportunity response."""
 
@@ -105,6 +114,7 @@ class SearchHistoryResponse(BaseModel):
     """Schema for search history item."""
 
     id: str
+    job_id: Optional[str] = None
     search_params: Dict[str, Any]
     total_results: int
     high_relevance_count: int

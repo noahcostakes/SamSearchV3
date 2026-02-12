@@ -1,3 +1,6 @@
 export { Header } from "./Header"
 export { Sidebar } from "./Sidebar"
 export { Layout } from "./Layout"
+export { PageHeader } from "./PageHeader"
+export { PRIMARY_NAV_ITEMS, getActiveNavItem } from "./navigation"
+export type { NavItem } from "./navigation"

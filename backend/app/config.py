@@ -1,8 +1,17 @@
 """Application configuration using Pydantic Settings."""
+import logging
 from functools import lru_cache
 from typing import List
 
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
+from pydantic_settings import SettingsConfigDict
+
+_INSECURE_JWT_KEYS = {
+    "dev-secret-key-change-in-production-min-32-chars",
+    "changeme",
+    "secret",
+}
 
 
 class Settings(BaseSettings):
@@ -12,7 +21,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "SAM.gov AI Search"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
-    ENVIRONMENT: str = "local"  # local, staging, production
+    ENVIRONMENT: str = Field(
+        default="local",
+        validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV"),
+    )  # local, staging, production
 
     # Database
     DATABASE_URL: str
@@ -21,15 +33,23 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str
+    REDIS_MAX_CONNECTIONS: int = 50
+    REDIS_SOCKET_TIMEOUT_SECONDS: float = 5.0
+    REDIS_HEALTH_CHECK_INTERVAL_SECONDS: int = 30
 
     # Security
-    JWT_SECRET_KEY: str
+    JWT_SECRET_KEY: str = Field(
+        validation_alias=AliasChoices("JWT_SECRET_KEY", "SECRET_KEY")
+    )
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Encryption for SAM.gov API keys
-    ENCRYPTION_MASTER_KEY: str
+    ENCRYPTION_MASTER_KEY: str = Field(
+        validation_alias=AliasChoices("ENCRYPTION_MASTER_KEY", "ENCRYPTION_KEY")
+    )
+    ENCRYPTION_ALLOW_LEGACY_FALLBACK: bool = True
 
     # AI - Local or Cloud
     USE_LOCAL_AI: bool = True  # Set to True for Ollama, False for Claude
@@ -47,7 +67,10 @@ class Settings(BaseSettings):
     SAM_RATE_LIMIT_PER_DAY: int = 950  # Buffer below 1000
 
     # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173"  # Comma-separated
+    ALLOWED_ORIGINS: str = Field(
+        default="http://localhost:3000,http://localhost:5173",
+        validation_alias=AliasChoices("ALLOWED_ORIGINS", "CORS_ORIGINS"),
+    )  # Comma-separated
     ALLOWED_HOSTS: str = "localhost,127.0.0.1"
 
     # Celery
@@ -61,6 +84,10 @@ class Settings(BaseSettings):
     # Rate Limiting (per user) - Set high for development/testing
     RATE_LIMIT_SEARCHES_PER_DAY: int = 100
     RATE_LIMIT_SEARCHES_PER_HOUR: int = 50
+
+    # Quick search ranking/output controls
+    QUICK_SEARCH_RESULT_LIMIT: int = Field(10, ge=1)
+    AI_SCORING_CANDIDATE_LIMIT: int = Field(100, ge=1)
 
     @property
     def allowed_origins_list(self) -> List[str]:
@@ -77,16 +104,37 @@ class Settings(BaseSettings):
         """Check if running in production environment."""
         return self.ENVIRONMENT == "production"
 
-    class Config:
-        # Look for .env in the parent directory (project root) or current dir
-        env_file = ("../.env", ".env")
-        case_sensitive = True
+    @model_validator(mode="after")
+    def _check_production_secrets(self) -> "Settings":
+        """Refuse to start in production with insecure default secrets."""
+        if self.is_production:
+            if self.JWT_SECRET_KEY in _INSECURE_JWT_KEYS:
+                raise ValueError(
+                    "FATAL: JWT_SECRET_KEY is set to an insecure default. "
+                    "Set a strong, unique secret before running in production."
+                )
+            if len(self.JWT_SECRET_KEY) < 32:
+                raise ValueError(
+                    "FATAL: JWT_SECRET_KEY must be at least 32 characters in production."
+                )
+        elif self.JWT_SECRET_KEY in _INSECURE_JWT_KEYS:
+            logging.getLogger(__name__).warning(
+                "JWT_SECRET_KEY is using a development default. "
+                "Do NOT use this value in production."
+            )
+        return self
+
+    model_config = SettingsConfigDict(
+        env_file=("../.env", ".env"),
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    return Settings()  # type: ignore[call-arg]
 
 
 settings = get_settings()

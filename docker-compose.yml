@@ -46,14 +46,16 @@ services:
       target: development
     container_name: samsearch-backend
     environment:
-      - APP_ENV=development
+      - ENVIRONMENT=local
       - DEBUG=true
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-samsearch}:${POSTGRES_PASSWORD:-samsearch_dev_password}@postgres:5432/${POSTGRES_DB:-samsearch}
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
     volumes:
       - ./backend:/app
       - /app/__pycache__
@@ -76,11 +78,13 @@ services:
     container_name: samsearch-celery-worker
     command: celery -A app.tasks.celery_app worker --loglevel=info
     environment:
-      - APP_ENV=development
+      - ENVIRONMENT=local
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-samsearch}:${POSTGRES_PASSWORD:-samsearch_dev_password}@postgres:5432/${POSTGRES_DB:-samsearch}
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - ./backend:/app
@@ -102,10 +106,12 @@ services:
     container_name: samsearch-celery-beat
     command: celery -A app.tasks.celery_app beat --loglevel=info
     environment:
-      - APP_ENV=development
+      - ENVIRONMENT=local
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-samsearch}:${POSTGRES_PASSWORD:-samsearch_dev_password}@postgres:5432/${POSTGRES_DB:-samsearch}
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
     volumes:
       - ./backend:/app
       - /app/__pycache__
@@ -137,7 +143,14 @@ services:
     container_name: samsearch-flower
     command: celery -A app.tasks.celery_app flower --port=5555
     environment:
+      - ENVIRONMENT=local
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-samsearch}:${POSTGRES_PASSWORD:-samsearch_dev_password}@postgres:5432/${POSTGRES_DB:-samsearch}
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production-min-32-chars}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     ports:
       - "5555:5555"
     depends_on:

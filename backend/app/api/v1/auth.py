@@ -1,7 +1,7 @@
 """Authentication endpoints."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,19 +31,54 @@ from app.services.token_blacklist import TokenBlacklist
 logger = get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# Auth endpoint rate limits (per IP)
+_AUTH_RATE_LIMIT_WINDOW = 900  # 15 minutes
+_AUTH_LOGIN_MAX = 10  # max login attempts per window
+_AUTH_REGISTER_MAX = 5  # max registration attempts per window
+
+
+async def _check_auth_rate_limit(
+    redis: Redis, request: Request, action: str, max_attempts: int
+) -> None:
+    """Rate-limit auth endpoints by client IP."""
+    client_ip = request.client.host if request.client else "unknown"
+    key = f"ratelimit:auth:{action}:{client_ip}"
+    try:
+        current = await redis.incr(key)
+        if current == 1:
+            await redis.expire(key, _AUTH_RATE_LIMIT_WINDOW)
+        if current > max_attempts:
+            logger.warning(
+                "Auth rate limit exceeded",
+                extra={"action": action, "ip": client_ip},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many attempts. Please try again later.",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Fail open — don't block auth if Redis is down
+        logger.error("Auth rate limit check failed", extra={"error": str(e)})
+
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> User:
     """Register a new user account."""
-    logger.info(f"Registration attempt for: {user_data.email}")
-    
+    await _check_auth_rate_limit(redis, request, "register", _AUTH_REGISTER_MAX)
+
+    logger.info("Registration attempt", extra={"email_domain": user_data.email.split("@")[-1]})
+
     # Check if email already exists
     result = await db.execute(select(User).where(User.email == user_data.email))
     if result.scalar_one_or_none():
-        logger.warning(f"Registration failed - email exists: {user_data.email}")
+        logger.warning("Registration failed - email exists")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
@@ -58,34 +93,27 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"User registered: {user.email}")
-
-    # Transform to response (add has_sam_api_key field)
-    return User(
-        id=user.id,
-        email=user.email,
-        is_active=user.is_active,
-        is_verified=user.is_verified,
-        sam_api_key_encrypted=user.sam_api_key_encrypted,
-        sam_api_key_expires_at=user.sam_api_key_expires_at,
-        created_at=user.created_at,
-        hashed_password=user.hashed_password,
-    )
+    logger.info("User registered", extra={"user_id": user.id})
+    return user
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
     credentials: UserLogin,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ) -> TokenResponse:
     """Login and receive access/refresh tokens."""
+    await _check_auth_rate_limit(redis, request, "login", _AUTH_LOGIN_MAX)
+
     # Find user by email
     result = await db.execute(select(User).where(User.email == credentials.email))
     user = result.scalar_one_or_none()
 
     # Verify credentials
     if not user or not verify_password(credentials.password, user.hashed_password):
-        logger.warning(f"Failed login attempt for: {credentials.email}")
+        logger.warning("Failed login attempt")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -100,7 +128,7 @@ async def login(
     # Create tokens
     access_token, refresh_token = create_tokens(user.id)
 
-    logger.info(f"User logged in: {user.email}")
+    logger.info("User logged in", extra={"user_id": user.id})
 
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
@@ -118,7 +146,7 @@ async def logout(
     logout_timestamp = int(datetime.now(timezone.utc).timestamp())
     await blacklist.add_user_logout(current_user.id, logout_timestamp)
 
-    logger.info(f"User logged out: {current_user.email}")
+    logger.info("User logged out", extra={"user_id": current_user.id})
 
     return {"message": "Successfully logged out"}
 
@@ -148,6 +176,11 @@ async def refresh_token(
     # Check blacklist
     user_id = payload.get("sub")
     token_iat = payload.get("iat")
+    if not isinstance(user_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject",
+        )
 
     if isinstance(token_iat, datetime):
         token_iat = int(token_iat.timestamp())
@@ -171,6 +204,18 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or disabled",
         )
+
+    # Revoke the current refresh token to prevent replay.
+    exp = payload.get("exp")
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if isinstance(exp, datetime):
+        exp_ts = int(exp.timestamp())
+    elif isinstance(exp, (int, float)):
+        exp_ts = int(exp)
+    else:
+        exp_ts = now_ts + 60
+    expires_in = max(1, exp_ts - now_ts)
+    await blacklist.add_token(request.refresh_token, expires_in)
 
     # Create new token pair
     access_token, new_refresh_token = create_tokens(user.id)
@@ -216,7 +261,7 @@ async def update_sam_api_key(
 
     await db.commit()
 
-    logger.info(f"SAM API key updated for user: {current_user.email}")
+    logger.info("SAM API key updated", extra={"user_id": current_user.id})
 
     return {"message": "SAM.gov API key updated successfully"}
 
@@ -232,6 +277,6 @@ async def delete_sam_api_key(
 
     await db.commit()
 
-    logger.info(f"SAM API key deleted for user: {current_user.email}")
+    logger.info("SAM API key deleted", extra={"user_id": current_user.id})
 
     return {"message": "SAM.gov API key deleted"}

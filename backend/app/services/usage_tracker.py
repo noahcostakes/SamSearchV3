@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 from app.config import settings
 from app.core.logging_config import get_logger
@@ -132,6 +133,65 @@ class UsageTracker:
             return False, "Daily search limit reached. Resets at midnight UTC."
 
         return True, None
+
+    async def try_consume_user_search(
+        self, user_id: str
+    ) -> tuple[bool, Optional[str], int, int]:
+        """
+        Atomically check and consume one user search quota.
+
+        Returns:
+            tuple: (allowed, error_message, hourly_count, daily_count)
+        """
+        now = datetime.now(timezone.utc)
+        hour_key = f"usage:search:{user_id}:{now.strftime('%Y-%m-%d-%H')}"
+        day_key = f"usage:search:{user_id}:{now.strftime('%Y-%m-%d')}"
+
+        try:
+            while True:
+                pipe = self.redis.pipeline()
+                try:
+                    await pipe.watch(hour_key, day_key)
+                    hourly_raw = await pipe.get(hour_key)
+                    daily_raw = await pipe.get(day_key)
+                    hourly = int(hourly_raw) if hourly_raw else 0
+                    daily = int(daily_raw) if daily_raw else 0
+
+                    if hourly >= settings.RATE_LIMIT_SEARCHES_PER_HOUR:
+                        await pipe.reset()
+                        return (
+                            False,
+                            "Hourly search limit reached. Please try again later.",
+                            hourly,
+                            daily,
+                        )
+                    if daily >= settings.RATE_LIMIT_SEARCHES_PER_DAY:
+                        await pipe.reset()
+                        return (
+                            False,
+                            "Daily search limit reached. Resets at midnight UTC.",
+                            hourly,
+                            daily,
+                        )
+
+                    pipe.multi()
+                    pipe.incr(hour_key)
+                    pipe.incr(day_key)
+                    if hourly == 0:
+                        pipe.expire(hour_key, 3600)
+                    if daily == 0:
+                        pipe.expire(day_key, 86400)
+                    results = await pipe.execute()
+                    return True, None, int(results[0]), int(results[1])
+                except WatchError:
+                    # Key changed concurrently; retry transaction.
+                    continue
+                finally:
+                    await pipe.reset()
+        except Exception as e:
+            logger.error(f"Failed to atomically consume user search: {e}")
+            # Preserve previous fail-open behavior for availability.
+            return True, None, 0, 0
 
     async def get_user_usage_stats(self, user_id: str) -> dict:
         """Get user's usage statistics."""

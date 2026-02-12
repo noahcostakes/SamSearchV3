@@ -15,8 +15,8 @@ env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(env_path)
 
 # Import models for autogenerate support
-from app.db.base import Base
-from app.models import User, CompanyProfile, SearchHistory, SavedOpportunity, AuditLog
+from app.db.base import Base  # noqa: E402
+import app.models  # noqa: F401, E402
 
 # this is the Alembic Config object
 config = context.config
@@ -31,7 +31,6 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     """Get database URL from environment."""
-    import os
     return os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/samdb")
 
 

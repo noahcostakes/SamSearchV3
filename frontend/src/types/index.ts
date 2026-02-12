@@ -68,20 +68,25 @@ export interface CompanyProfile {
 
 export interface ProfileFormData {
   company_name: string
-  employee_count: number
-  annual_revenue?: number
-  headquarters_state: string
+  cage_code?: string
+  uei_number?: string
+  duns_number?: string
   primary_naics: string
   secondary_naics: string[]
   core_competencies: string[]
   technical_skills: string[]
-  industry_experience_years: number
+  past_performance_keywords: string[]
+  priority_keywords: string[]
   certifications: string[]
+  clearance_level: string
   target_contract_min: number
   target_contract_max: number
   preferred_agencies: string[]
   service_area: string[]
   max_response_days: number
+  contract_types_preference: string[]
+  open_to_subcontracting: boolean
+  open_to_prime_contracting: boolean
   blacklist_keywords: string[]
   requires_clearance: boolean
 }
@@ -171,12 +176,29 @@ export interface SavedOpportunity {
 // Search history
 export interface SearchHistory {
   id: string
+  job_id?: string | null
   search_params: { days_back: number }
   total_results: number
   high_relevance_count: number
   medium_relevance_count: number
   low_relevance_count: number
   job_status: string
+  created_at: string
+}
+
+export interface SearchHistoryDetail {
+  id: string
+  status: string
+  search_params: { days_back: number }
+  total_results: number
+  high_relevance_count: number
+  medium_relevance_count: number
+  low_relevance_count: number
+  results?: {
+    totalRecords?: number
+    opportunities?: Opportunity[]
+    searchParams?: { days_back: number }
+  }
   created_at: string
 }
 

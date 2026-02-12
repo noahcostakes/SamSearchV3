@@ -1,24 +1,25 @@
+/* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex min-h-6 items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold tracking-wide transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+          "border-primary/25 bg-primary/12 text-primary hover:bg-primary/20",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-secondary bg-secondary text-secondary-foreground hover:bg-secondary/85",
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
-        outline: "text-foreground",
+          "border-destructive/35 bg-destructive/15 text-destructive hover:bg-destructive/20",
+        outline: "border-border bg-background text-foreground",
         success:
-          "border-transparent bg-green-500 text-white hover:bg-green-600",
+          "border-emerald-300 bg-emerald-100 text-emerald-800 hover:bg-emerald-200",
         warning:
-          "border-transparent bg-yellow-500 text-white hover:bg-yellow-600",
+          "border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200",
       },
     },
     defaultVariants: {

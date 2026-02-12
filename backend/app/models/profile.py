@@ -4,11 +4,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+from app.db.types import JSONType
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -36,18 +36,18 @@ class CompanyProfile(Base):
 
     # NAICS codes
     primary_naics: Mapped[str] = mapped_column(String(6), nullable=False)
-    secondary_naics: Mapped[list] = mapped_column(JSONB, default=list)
+    secondary_naics: Mapped[list] = mapped_column(JSONType, default=list)
 
     # Capabilities
-    core_competencies: Mapped[list] = mapped_column(JSONB, nullable=False)
-    technical_skills: Mapped[list] = mapped_column(JSONB, default=list)
+    core_competencies: Mapped[list] = mapped_column(JSONType, nullable=False)
+    technical_skills: Mapped[list] = mapped_column(JSONType, default=list)
     
     # Past Performance (Phase 1)
-    past_performance_keywords: Mapped[list] = mapped_column(JSONB, default=list)
-    priority_keywords: Mapped[list] = mapped_column(JSONB, default=list)
+    past_performance_keywords: Mapped[list] = mapped_column(JSONType, default=list)
+    priority_keywords: Mapped[list] = mapped_column(JSONType, default=list)
 
     # Certifications
-    certifications: Mapped[list] = mapped_column(JSONB, default=list)
+    certifications: Mapped[list] = mapped_column(JSONType, default=list)
     
     # Security Clearance (Phase 1)
     clearance_level: Mapped[str] = mapped_column(String(20), default="None")
@@ -55,17 +55,17 @@ class CompanyProfile(Base):
     # Preferences
     target_contract_min: Mapped[int] = mapped_column(Integer, default=25000)
     target_contract_max: Mapped[int] = mapped_column(Integer, default=2000000)
-    preferred_agencies: Mapped[list] = mapped_column(JSONB, default=list)
-    service_area: Mapped[list] = mapped_column(JSONB, default=list)
+    preferred_agencies: Mapped[list] = mapped_column(JSONType, default=list)
+    service_area: Mapped[list] = mapped_column(JSONType, default=list)
     max_response_days: Mapped[int] = mapped_column(Integer, default=30)
     
     # Contract Preferences (Phase 1)
-    contract_types_preference: Mapped[list] = mapped_column(JSONB, default=list)
+    contract_types_preference: Mapped[list] = mapped_column(JSONType, default=list)
     open_to_subcontracting: Mapped[bool] = mapped_column(Boolean, default=True)
     open_to_prime_contracting: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Constraints
-    blacklist_keywords: Mapped[list] = mapped_column(JSONB, default=list)
+    blacklist_keywords: Mapped[list] = mapped_column(JSONType, default=list)
     requires_clearance: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(

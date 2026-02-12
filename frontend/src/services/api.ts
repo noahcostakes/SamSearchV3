@@ -1,31 +1,31 @@
 /**
  * API service for making HTTP requests to the backend.
  */
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios'
-import { useAuthStore } from '@/stores/authStore'
-import type { 
-  ApiError, 
-  User, 
-  TokenResponse, 
-  CompanyProfile, 
+import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios"
+
+import { useAuthStore } from "@/stores/authStore"
+import type {
+  ApiError,
+  CompanyProfile,
   ProfileFormData,
+  SavedOpportunity,
+  SearchHistory,
+  SearchHistoryDetail,
   SearchStartResponse,
   SearchStatusResponse,
-  SavedOpportunity,
-  SearchHistory
-} from '@/types'
+  TokenResponse,
+  User,
+} from "@/types"
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1"
 
-// Create axios instance
 const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   headers: {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
 })
 
-// Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().accessToken
@@ -34,47 +34,45 @@ api.interceptors.request.use(
     }
     return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
-// Response interceptor for token refresh
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ApiError>) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean }
+    const requestUrl = originalRequest?.url || ""
 
-    // If 401 and not already retrying, try to refresh token
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (
+      error.response?.status === 401 &&
+      !originalRequest?._retry &&
+      !requestUrl.includes("/auth/login") &&
+      !requestUrl.includes("/auth/refresh")
+    ) {
       originalRequest._retry = true
 
       const refreshToken = useAuthStore.getState().refreshToken
       if (refreshToken) {
         try {
-          const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+          const response = await axios.post<TokenResponse>(`${API_BASE_URL}/auth/refresh`, {
             refresh_token: refreshToken,
           })
-
           const { access_token, refresh_token } = response.data
           useAuthStore.getState().setTokens(access_token, refresh_token)
 
-          // Retry original request
           if (originalRequest.headers) {
             originalRequest.headers.Authorization = `Bearer ${access_token}`
           }
           return api(originalRequest)
         } catch (refreshError) {
-          // Refresh failed, logout
           useAuthStore.getState().logout()
-          window.location.href = '/login'
+          window.location.href = "/login"
           return Promise.reject(refreshError)
         }
-      } else {
-        // No refresh token, logout
-        useAuthStore.getState().logout()
-        window.location.href = '/login'
       }
+
+      useAuthStore.getState().logout()
+      window.location.href = "/login"
     }
 
     return Promise.reject(error)
@@ -83,7 +81,6 @@ api.interceptors.response.use(
 
 export { api }
 
-// Helper to extract error message
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const axiosError = error as AxiosError<ApiError>
@@ -92,7 +89,7 @@ export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
   }
-  return 'An unexpected error occurred'
+  return "An unexpected error occurred"
 }
 
 // ============================================================================
@@ -106,13 +103,7 @@ export interface LoginRequest {
 export interface RegisterRequest {
   email: string
   password: string
-  confirm_password?: string  // Only used for frontend validation, not sent to API
-}
-
-export interface AuthResponse {
-  user: User
-  access_token: string
-  refresh_token: string
+  confirm_password?: string
 }
 
 export interface CompanyProfileUpdate extends Partial<ProfileFormData> {}
@@ -122,70 +113,48 @@ export interface SAMKeyUpdate {
 }
 
 export interface SearchRequest {
-  keywords?: string
-  naics_codes?: string[]
-  notice_types?: string[]
-  set_aside_types?: string[]
-  ptype?: string
-  type_of_set_aside?: string
-  place_of_performance_state?: string
-  posted_from?: string
-  posted_to?: string
-  response_deadline_from?: string
-  response_deadline_to?: string
+  days_back: number
 }
 
 export interface SaveOpportunityRequest {
   notice_id: string
-  title: string
-  solicitation_number?: string
-  agency?: string
-  posted_date?: string
-  response_deadline?: string
+  opportunity_data: object
   relevance_score?: number
   ai_analysis?: object
   recommendation?: string
-  opportunity_data: object
-}
-
-export interface PaginatedResponse<T> {
-  items: T[]
-  total: number
-  page: number
-  pages: number
+  user_notes?: string
 }
 
 // ============================================================================
 // Auth API
 // ============================================================================
 export const authApi = {
-  login: async (data: LoginRequest): Promise<AuthResponse> => {
-    const response = await api.post('/auth/login', data)
+  login: async (data: LoginRequest): Promise<TokenResponse> => {
+    const response = await api.post("/auth/login", data)
     return response.data
   },
-  
+
   register: async (data: RegisterRequest): Promise<User> => {
-    // Only send email and password to backend
-    const response = await api.post('/auth/register', {
+    const response = await api.post("/auth/register", {
       email: data.email,
       password: data.password,
     })
     return response.data
   },
-  
+
   logout: async (): Promise<void> => {
-    await api.post('/auth/logout')
+    await api.post("/auth/logout")
   },
-  
+
   refreshToken: async (refreshToken: string): Promise<TokenResponse> => {
-    const response = await api.post('/auth/refresh', { refresh_token: refreshToken })
+    const response = await api.post("/auth/refresh", { refresh_token: refreshToken })
     return response.data
   },
-  
+
   me: async (): Promise<User> => {
-    const response = await api.get('/auth/me')
+    const response = await api.get("/auth/me")
     return response.data
-  }
+  },
 }
 
 // ============================================================================
@@ -194,35 +163,35 @@ export const authApi = {
 export const profileApi = {
   get: async (): Promise<CompanyProfile | null> => {
     try {
-      const response = await api.get('/profile')
+      const response = await api.get("/profile")
       return response.data
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null  // Profile doesn't exist yet
+        return null
       }
       throw error
     }
   },
-  
+
   update: async (data: CompanyProfileUpdate): Promise<CompanyProfile> => {
-    const response = await api.put('/profile', data)
+    const response = await api.put("/profile", data)
     return response.data
   },
-  
+
   getSAMKeyStatus: async (): Promise<{ has_key: boolean; expires_at: string | null }> => {
-    const response = await api.get('/auth/sam-key/status')
+    const response = await api.get("/auth/sam-key/status")
     return response.data
   },
-  
+
   updateSAMKey: async (data: SAMKeyUpdate): Promise<{ message: string }> => {
-    const response = await api.put('/auth/sam-key', data)
+    const response = await api.put("/auth/sam-key", data)
     return response.data
   },
-  
+
   deleteSAMKey: async (): Promise<{ message: string }> => {
-    const response = await api.delete('/auth/sam-key')
+    const response = await api.delete("/auth/sam-key")
     return response.data
-  }
+  },
 }
 
 // ============================================================================
@@ -230,39 +199,57 @@ export const profileApi = {
 // ============================================================================
 export const searchApi = {
   search: async (data: SearchRequest): Promise<SearchStartResponse> => {
-    const response = await api.post('/search/start', data)
+    const response = await api.post("/search/start", data)
     return response.data
   },
-  
+
   getStatus: async (jobId: string): Promise<SearchStatusResponse> => {
     const response = await api.get(`/jobs/${jobId}/status`)
     return response.data
   },
-  
-  getHistory: async (page = 1, limit = 10): Promise<PaginatedResponse<SearchHistory>> => {
-    const response = await api.get('/search/history', { params: { page, limit } })
+
+  getHistory: async (limit = 10, offset = 0): Promise<SearchHistory[]> => {
+    const response = await api.get("/search/history", { params: { limit, offset } })
     return response.data
   },
-  
-  getSavedOpportunities: async (page = 1, limit = 10): Promise<PaginatedResponse<SavedOpportunity>> => {
-    const response = await api.get('/search/saved', { params: { page, limit } })
+
+  getHistoryById: async (searchId: string): Promise<SearchHistoryDetail> => {
+    const response = await api.get(`/search/history/${searchId}`)
     return response.data
   },
-  
+
+  getSavedOpportunities: async (
+    statusFilter?: "saved" | "pursuing" | "passed",
+    limit = 50,
+    offset = 0
+  ): Promise<SavedOpportunity[]> => {
+    const response = await api.get("/search/saved", {
+      params: { status_filter: statusFilter, limit, offset },
+    })
+    return response.data
+  },
+
   saveOpportunity: async (data: SaveOpportunityRequest): Promise<SavedOpportunity> => {
-    const response = await api.post('/search/save', data)
+    const response = await api.post("/search/save", data)
     return response.data
   },
-  
-  unsaveOpportunity: async (noticeId: string): Promise<{ message: string }> => {
-    const response = await api.delete(`/search/saved/${noticeId}`)
+
+  unsaveOpportunity: async (opportunityId: string): Promise<{ message: string }> => {
+    const response = await api.delete(`/search/saved/${opportunityId}`)
     return response.data
   },
-  
-  updateOpportunityStatus: async (noticeId: string, status: string, notes?: string): Promise<SavedOpportunity> => {
-    const response = await api.patch(`/search/saved/${noticeId}`, { user_status: status, user_notes: notes })
+
+  updateOpportunityStatus: async (
+    opportunityId: string,
+    status: "saved" | "pursuing" | "passed",
+    notes?: string
+  ): Promise<SavedOpportunity> => {
+    const response = await api.put(`/search/saved/${opportunityId}`, {
+      user_status: status,
+      user_notes: notes,
+    })
     return response.data
-  }
+  },
 }
 
 // ============================================================================
@@ -273,9 +260,10 @@ export const jobsApi = {
     const response = await api.get(`/jobs/${jobId}/status`)
     return response.data
   },
-  
+
   cancel: async (jobId: string): Promise<{ message: string }> => {
-    const response = await api.post(`/jobs/${jobId}/cancel`)
+    const response = await api.delete(`/jobs/${jobId}`)
     return response.data
-  }
+  },
 }
+

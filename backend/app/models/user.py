@@ -57,7 +57,12 @@ class User(Base):
         Index("idx_users_created_at", "created_at"),
     )
 
+    @property
+    def has_sam_api_key(self) -> bool:
+        """Expose SAM key presence for API response models."""
+        return self.sam_api_key_encrypted is not None
+
 
 # Import here to avoid circular imports
-from app.models.profile import CompanyProfile
-from app.models.search import SearchHistory, SavedOpportunity
+from app.models.profile import CompanyProfile  # noqa: E402
+from app.models.search import SearchHistory, SavedOpportunity  # noqa: E402

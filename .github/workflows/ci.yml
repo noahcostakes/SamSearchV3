@@ -72,9 +72,9 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
           REDIS_URL: redis://localhost:6379/0
-          SECRET_KEY: test-secret-key-for-ci-minimum-32-characters
-          ENCRYPTION_KEY: ${{ secrets.TEST_ENCRYPTION_KEY }}
-          APP_ENV: test
+          JWT_SECRET_KEY: test-secret-key-for-ci-minimum-32-characters
+          ENCRYPTION_MASTER_KEY: ${{ secrets.TEST_ENCRYPTION_KEY }}
+          ENVIRONMENT: test
         run: |
           pytest --cov=app --cov-report=xml --cov-report=html -v
       
@@ -114,7 +114,7 @@ jobs:
       
       - name: Run tests
         working-directory: frontend
-        run: npm run test -- --coverage --watchAll=false
+        run: npm run test -- --run --coverage
       
       - name: Build
         working-directory: frontend
