@@ -1,4 +1,6 @@
+import { useEffect } from "react"
 import { useForm, useFieldArray } from "react-hook-form"
+import { useBlocker } from "react-router-dom"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { Plus, Trash2 } from "lucide-react"
@@ -73,7 +75,7 @@ export function ProfilePage() {
     handleSubmit,
     watch,
     setValue,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
     values: profile
@@ -167,6 +169,17 @@ export function ProfilePage() {
     control,
     name: "blacklist_keywords",
   })
+
+  // Warn user about unsaved changes when navigating away
+  const blocker = useBlocker(isDirty)
+  useEffect(() => {
+    if (!isDirty) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+    }
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [isDirty])
 
   const selectedCertifications = watch("certifications") || []
   const selectedContractTypes = watch("contract_types_preference") || []
@@ -868,7 +881,10 @@ export function ProfilePage() {
         </Card>
 
         {/* Submit */}
-        <div className="flex justify-end gap-3">
+        <div className="flex items-center justify-end gap-3">
+          {isDirty ? (
+            <p className="text-sm font-medium text-amber-600 dark:text-amber-400">Unsaved changes</p>
+          ) : null}
           <Button
             type="submit"
             size="lg"
@@ -885,6 +901,26 @@ export function ProfilePage() {
           </Button>
         </div>
       </form>
+
+      {/* Navigation blocker dialog */}
+      {blocker.state === "blocked" ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl">
+            <h3 className="font-display text-lg font-semibold">Unsaved changes</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              You have unsaved profile changes. Are you sure you want to leave this page?
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => blocker.reset?.()}>
+                Stay on page
+              </Button>
+              <Button variant="destructive" onClick={() => blocker.proceed?.()}>
+                Leave without saving
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

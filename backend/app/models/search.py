@@ -53,6 +53,7 @@ class SearchHistory(Base):
         Index("idx_search_history_user_id", "user_id"),
         Index("idx_search_history_created_at", "created_at"),
         Index("idx_search_history_job_id", "job_id"),
+        Index("idx_search_history_user_created", "user_id", "created_at"),
     )
 
 

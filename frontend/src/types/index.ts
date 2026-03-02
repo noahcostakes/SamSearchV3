@@ -94,6 +94,12 @@ export interface ProfileFormData {
 // Search types
 export interface SearchRequest {
   days_back: number
+  keywords?: string
+  naics_codes?: string[]
+  ptype?: string
+  type_of_set_aside?: string
+  posted_from?: string
+  posted_to?: string
 }
 
 export interface SearchStartResponse {

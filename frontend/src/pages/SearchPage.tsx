@@ -3,18 +3,11 @@ import { Link } from "react-router-dom"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import {
-  Bookmark,
-  BookmarkCheck,
-  Building,
-  Clock,
-  ExternalLink,
-  Filter,
-  MapPin,
-  Search,
-} from "lucide-react"
+import { Filter, Search } from "lucide-react"
 
 import { PageHeader } from "@/components/layout"
+import { SearchOpportunityCard } from "@/components/OpportunityCard"
+import { SearchProgressBar } from "@/components/SearchProgressBar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/EmptyState"
@@ -32,7 +25,7 @@ import {
   useSearchResults,
   useStartSearch,
 } from "@/hooks/useSearch"
-import { getOpportunityRelevance, selectTopDisplayedOpportunities } from "@/pages/searchResults"
+import { selectTopDisplayedOpportunities } from "@/pages/searchResults"
 import { NOTICE_TYPES, SET_ASIDE_TYPES } from "@/types"
 import type { Opportunity, SearchHistory } from "@/types"
 
@@ -59,7 +52,7 @@ export function SearchPage() {
   const { data: searchHistory } = useSearchHistory(10, 0)
   const { data: selectedSearch } = useSearchHistoryDetails(selectedSearchId)
   const startSearchMutation = useStartSearch()
-  const { data: searchResults, isLoading: resultsLoading } = useSearchResults(currentJobId)
+  const { data: searchResults } = useSearchResults(currentJobId)
   const saveOpportunityMutation = useSaveOpportunity()
 
   const { register, handleSubmit, setValue, watch } = useForm<SearchFormData>({
@@ -71,9 +64,17 @@ export function SearchPage() {
   })
 
   const onSubmit = async (data: SearchFormData) => {
-    const result = await startSearchMutation.mutateAsync({
+    const payload = {
       days_back: data.days_back ?? 30,
-    })
+      ...(data.keywords?.trim() ? { keywords: data.keywords.trim() } : {}),
+      ...(data.naics_codes?.length ? { naics_codes: data.naics_codes } : {}),
+      ...(data.ptype ? { ptype: data.ptype } : {}),
+      ...(data.type_of_set_aside ? { type_of_set_aside: data.type_of_set_aside } : {}),
+      ...(data.posted_from ? { posted_from: data.posted_from } : {}),
+      ...(data.posted_to ? { posted_to: data.posted_to } : {}),
+    }
+
+    const result = await startSearchMutation.mutateAsync(payload)
     setCurrentJobId(result.job_id)
     setSelectedSearchId(result.search_id)
   }
@@ -86,12 +87,6 @@ export function SearchPage() {
       recommendation: opportunity.score?.recommendation,
       opportunity_data: opportunity,
     })
-  }
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return "default"
-    if (score >= 60) return "secondary"
-    return "outline"
   }
 
   const displayedOpportunities = selectTopDisplayedOpportunities(searchResults, selectedSearch ?? undefined)
@@ -175,9 +170,6 @@ export function SearchPage() {
 
               {showFilters ? (
                 <div className="grid gap-4 border-t border-border/60 pt-4 md:grid-cols-2 lg:grid-cols-3">
-                  <p className="md:col-span-2 lg:col-span-3 text-sm text-muted-foreground">
-                    Advanced filters are preview-only right now. Current quick search uses your profile and Days Back.
-                  </p>
                   <div className="space-y-2">
                     <Label>Notice type</Label>
                     <Select onValueChange={(value) => setValue("ptype", value)} value={watch("ptype")}>
@@ -243,56 +235,37 @@ export function SearchPage() {
 
           {currentJobId ? (
             <SectionCard title="Search status" description="Background search and scoring progress.">
-              {resultsLoading ||
-              searchResults?.status === "pending" ||
-              searchResults?.status === "processing" ||
-              searchResults?.status === "searching" ||
-              searchResults?.status === "scoring" ? (
-                <div className="flex items-center gap-3">
-                  <Spinner />
-                  <div>
-                    <p className="font-semibold">
-                      {searchResults?.status === "searching"
-                        ? "Searching SAM.gov..."
-                        : searchResults?.status === "scoring"
-                        ? "Scoring opportunities with AI..."
-                        : "Processing..."}
-                    </p>
-                    <p className="text-sm text-muted-foreground">This can take a moment for larger result sets.</p>
-                  </div>
-                </div>
-              ) : searchResults?.status === "complete" ? (
+              <SearchProgressBar
+                status={searchResults?.status || "pending"}
+                error={searchResults?.error}
+              />
+              {searchResults?.status === "complete" ? (
                 displayedOpportunities.length > 0 ? (
-                  <p className="font-medium text-emerald-700">
-                    Search complete. Showing top {displayedOpportunities.length} best matches
+                  <p className="mt-3 font-medium text-emerald-700 dark:text-emerald-400">
+                    Showing top {displayedOpportunities.length} best matches
                     {typeof totalRecords === "number" && totalRecords > displayedOpportunities.length
                       ? ` from ${totalRecords} total opportunities.`
                       : "."}
                   </p>
                 ) : (
-                  <p className="font-medium text-amber-700">
-                    Search complete, but no opportunities matched this profile window. Try increasing Days back or
-                    broadening NAICS/keywords in your profile.
+                  <p className="mt-3 font-medium text-amber-700 dark:text-amber-400">
+                    No opportunities matched this profile window. Try increasing Days back or broadening
+                    NAICS/keywords in your profile.
                   </p>
                 )
-              ) : searchResults?.status === "failed" ? (
-                <p className="font-medium text-destructive">
-                  Search failed: {searchResults.error || "Unknown error"}
-                </p>
               ) : null}
             </SectionCard>
           ) : null}
 
           {displayedOpportunities.length > 0 ? (
-            <section className="space-y-3">
+            <section className="content-reveal space-y-3">
               <h2 className="font-display text-2xl">Results ({displayedOpportunities.length})</h2>
               <div className="space-y-3">
                 {displayedOpportunities.map((opportunity) => (
-                  <OpportunityCard
+                  <SearchOpportunityCard
                     key={opportunity.noticeId}
                     opportunity={opportunity}
                     onSave={() => handleSave(opportunity)}
-                    getScoreColor={getScoreColor}
                   />
                 ))}
               </div>
@@ -336,75 +309,5 @@ export function SearchPage() {
         </TabsContent>
       </Tabs>
     </div>
-  )
-}
-
-interface OpportunityCardProps {
-  opportunity: Opportunity
-  onSave: () => void
-  getScoreColor: (score: number) => "default" | "secondary" | "outline"
-  isSaved?: boolean
-}
-
-function OpportunityCard({ opportunity, onSave, getScoreColor, isSaved = false }: OpportunityCardProps) {
-  const relevance = getOpportunityRelevance(opportunity)
-  const samUrl = `https://sam.gov/opp/${opportunity.noticeId}/view`
-
-  return (
-    <SectionCard className="hover:border-primary/45" contentClassName="p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start gap-2">
-            <h3 className="font-semibold text-lg leading-snug">{opportunity.title}</h3>
-            <Badge variant={getScoreColor(relevance)}>{relevance}% Match</Badge>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-3 text-sm text-muted-foreground">
-            <div className="inline-flex items-center gap-1.5">
-              <Building className="h-4 w-4" />
-              {opportunity.department || opportunity.office || "Unknown Agency"}
-            </div>
-            {opportunity.placeOfPerformance ? (
-              <div className="inline-flex items-center gap-1.5">
-                <MapPin className="h-4 w-4" />
-                {opportunity.placeOfPerformance.city}, {opportunity.placeOfPerformance.state}
-              </div>
-            ) : null}
-            {opportunity.responseDeadLine ? (
-              <div className="inline-flex items-center gap-1.5">
-                <Clock className="h-4 w-4" />
-                Due: {new Date(opportunity.responseDeadLine).toLocaleDateString()}
-              </div>
-            ) : null}
-            {opportunity.naicsCode ? <Badge variant="outline">NAICS: {opportunity.naicsCode}</Badge> : null}
-            {opportunity.typeOfSetAsideDescription ? (
-              <Badge variant="outline">{opportunity.typeOfSetAsideDescription}</Badge>
-            ) : null}
-          </div>
-
-          {opportunity.description ? (
-            <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{opportunity.description}</p>
-          ) : null}
-
-          {opportunity.score ? (
-            <div className="mt-3 rounded-lg border border-border/60 bg-muted/25 p-3">
-              <p className="text-sm font-semibold">AI Analysis</p>
-              <p className="mt-1 text-sm text-muted-foreground">{opportunity.score.reasoning}</p>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex shrink-0 flex-col gap-2">
-          <Button variant="outline" size="icon" onClick={onSave} title={isSaved ? "Saved" : "Save opportunity"}>
-            {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
-          </Button>
-          <Button variant="outline" size="icon" asChild>
-            <a href={samUrl} target="_blank" rel="noopener noreferrer" title="View on SAM.gov">
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          </Button>
-        </div>
-      </div>
-    </SectionCard>
   )
 }

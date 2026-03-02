@@ -1,4 +1,5 @@
 """SAM.gov API client with correct parameter names and date formats."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 import inspect
 from typing import Any, Dict, List, Optional
@@ -9,6 +10,9 @@ from app.config import settings
 from app.core.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_BASE = 1.5  # seconds: 1.5, 3.0, 6.0
 
 
 class SAMClientError(Exception):
@@ -124,11 +128,7 @@ class SAMClient:
         )
 
         try:
-            response = await self.client.get(self.base_url, params=params)
-            maybe_raise = response.raise_for_status()
-            if inspect.isawaitable(maybe_raise):
-                await maybe_raise
-
+            response = await self._request_with_retry(params)
             data = response.json()
             if inspect.isawaitable(data):
                 data = await data
@@ -154,12 +154,64 @@ class SAMClient:
                 raise SAMClientError(f"SAM.gov API error: {e.response.status_code}")
 
         except httpx.TimeoutException:
-            logger.error("SAM.gov request timeout")
+            logger.error("SAM.gov request timeout after retries")
             raise SAMClientError("SAM.gov API timeout")
+
+        except (SAMRateLimitError, SAMAuthError, SAMClientError):
+            raise
 
         except Exception as e:
             logger.exception(f"SAM.gov unexpected error: {e}")
             raise SAMClientError(f"Unexpected error: {str(e)}")
+
+    async def _request_with_retry(
+        self,
+        params: Dict[str, Any],
+    ) -> httpx.Response:
+        """Execute GET request with exponential backoff on transient errors."""
+        last_error: Exception | None = None
+
+        for attempt in range(_MAX_RETRIES):
+            try:
+                response = await self.client.get(self.base_url, params=params)
+                maybe_raise = response.raise_for_status()
+                if inspect.isawaitable(maybe_raise):
+                    await maybe_raise
+                return response
+
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                # Don't retry auth or rate-limit errors — they won't resolve
+                if status_code in (401, 403, 429):
+                    raise
+                last_error = e
+                if attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                    logger.warning(
+                        f"SAM.gov HTTP {status_code}, retrying in {wait:.1f}s (attempt {attempt + 1}/{_MAX_RETRIES})"
+                    )
+                    await asyncio.sleep(wait)
+
+            except httpx.TimeoutException as e:
+                last_error = e
+                if attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                    logger.warning(
+                        f"SAM.gov timeout, retrying in {wait:.1f}s (attempt {attempt + 1}/{_MAX_RETRIES})"
+                    )
+                    await asyncio.sleep(wait)
+
+            except httpx.ConnectError as e:
+                last_error = e
+                if attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF_BASE * (2 ** attempt)
+                    logger.warning(
+                        f"SAM.gov connection error, retrying in {wait:.1f}s (attempt {attempt + 1}/{_MAX_RETRIES})"
+                    )
+                    await asyncio.sleep(wait)
+
+        # All retries exhausted
+        raise last_error  # type: ignore[misc]
 
     async def search_all_pages(
         self,
@@ -205,27 +257,45 @@ class SAMClient:
         self,
         profile: Dict[str, Any],
         days_back: int = 30,
+        filters: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """
-        Search SAM.gov based on company profile.
+        Search SAM.gov based on company profile with optional filter overrides.
 
         Args:
             profile: Company profile dictionary
             days_back: Number of days to search back
+            filters: Optional user-provided filter overrides
+                     (keywords, naics_codes, ptype, type_of_set_aside,
+                      posted_from, posted_to)
 
         Returns:
             Dict with opportunitiesData and totalRecords
         """
-        # Calculate date range
-        posted_to = datetime.now(timezone.utc)
-        posted_from = posted_to - timedelta(days=days_back)
+        filters = filters or {}
+
+        # Calculate date range — honour explicit dates if provided by user
+        if filters.get("posted_from") and filters.get("posted_to"):
+            posted_from = datetime.strptime(filters["posted_from"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            posted_to = datetime.strptime(filters["posted_to"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            posted_to = datetime.now(timezone.utc)
+            posted_from = posted_to - timedelta(days=days_back)
 
         # Use at most 3 NAICS codes and query them one-at-a-time. In practice,
         # comma-joined NAICS constraints can be overly restrictive.
+        # User-provided codes take priority over profile codes.
+        user_naics = filters.get("naics_codes")
         naics_candidates: List[str] = []
-        primary_naics = str(profile.get("primary_naics") or "").strip()
-        if primary_naics:
-            naics_candidates.append(primary_naics)
+        if user_naics:
+            for code in user_naics[:3]:
+                code_str = str(code).strip()
+                if code_str:
+                    naics_candidates.append(code_str)
+        else:
+            primary_naics = str(profile.get("primary_naics") or "").strip()
+            if primary_naics:
+                naics_candidates.append(primary_naics)
         for code in profile.get("secondary_naics", []) or []:
             code_str = str(code).strip()
             if code_str and code_str not in naics_candidates:
@@ -236,22 +306,26 @@ class SAMClient:
         # Opportunity types:
         # o=solicitation, p=presolicitation, k=combined synopsis/solicitation
         # r=sources sought, s=special notice
-        strict_ptype = "o,p,k"
-        broad_ptype = "o,p,k,r,s"
+        strict_ptype = filters.get("ptype") or "o,p,k"
+        broad_ptype = filters.get("ptype") or "o,p,k,r,s"
 
-        # Build set-aside filter based on certifications.
-        certs = set(profile.get("certifications", []) or [])
-        set_aside = None
-        if "8(a)" in certs:
-            set_aside = "8A"
-        elif "HUBZone" in certs:
-            set_aside = "HZC"
-        elif "EDWOSB" in certs:
-            set_aside = "EDWOSB"
-        elif "WOSB" in certs:
-            set_aside = "WOSB"
-        elif "SDVOSB" in certs:
-            set_aside = "SDVOSBC"
+        # Build set-aside filter based on certifications (or user override).
+        user_set_aside = filters.get("type_of_set_aside")
+        if user_set_aside:
+            set_aside = user_set_aside
+        else:
+            certs = set(profile.get("certifications", []) or [])
+            set_aside = None
+            if "8(a)" in certs:
+                set_aside = "8A"
+            elif "HUBZone" in certs:
+                set_aside = "HZC"
+            elif "EDWOSB" in certs:
+                set_aside = "EDWOSB"
+            elif "WOSB" in certs:
+                set_aside = "WOSB"
+            elif "SDVOSB" in certs:
+                set_aside = "SDVOSBC"
 
         # Narrow to state only when exactly one service area is provided.
         state = None
@@ -259,17 +333,21 @@ class SAMClient:
         if len(service_area) == 1:
             state = str(service_area[0]).strip() or None
 
-        # Build keyword seed; use one strong phrase in strict mode and relax later.
-        keyword_candidates: List[str] = []
-        for keyword in (profile.get("priority_keywords", []) or []) + (
-            profile.get("past_performance_keywords", []) or []
-        ):
-            cleaned = str(keyword).strip()
-            if cleaned and cleaned not in keyword_candidates:
-                keyword_candidates.append(cleaned)
-            if len(keyword_candidates) >= 3:
-                break
-        strict_keyword = keyword_candidates[0] if keyword_candidates else None
+        # Build keyword seed; user-provided keywords override profile keywords.
+        user_keywords = filters.get("keywords")
+        if user_keywords:
+            strict_keyword = str(user_keywords).strip() or None
+        else:
+            keyword_candidates: List[str] = []
+            for keyword in (profile.get("priority_keywords", []) or []) + (
+                profile.get("past_performance_keywords", []) or []
+            ):
+                cleaned = str(keyword).strip()
+                if cleaned and cleaned not in keyword_candidates:
+                    keyword_candidates.append(cleaned)
+                if len(keyword_candidates) >= 3:
+                    break
+            strict_keyword = keyword_candidates[0] if keyword_candidates else None
 
         fetch_limit = min(
             500,

@@ -30,11 +30,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "max-age=31536000; includeSubDomains"
             )
 
-        # CSP
+        # CSP — no unsafe-inline; Tailwind uses class-based styling, not inline
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'"
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "connect-src 'self' https://api.sam.gov; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
         )
+
+        # Additional security headers
+        response.headers["Permissions-Policy"] = (
+            "accelerometer=(), camera=(), microphone=(), payment=(), "
+            "geolocation=(), usb=()"
+        )
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
 
         return response
 

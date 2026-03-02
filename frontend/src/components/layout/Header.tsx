@@ -1,14 +1,39 @@
 import { useLocation, useNavigate } from "react-router-dom"
-import { LogOut, Menu } from "lucide-react"
+import { LogOut, Menu, Moon, Monitor, Sun } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useAuthStore } from "@/stores/authStore"
+import { useThemeStore } from "@/stores/themeStore"
 
 import { getActiveNavItem } from "./navigation"
 
 interface HeaderProps {
   onMenuClick?: () => void
   isNavOpen?: boolean
+}
+
+function ThemeToggle() {
+  const { theme, setTheme } = useThemeStore()
+
+  const cycle = () => {
+    const next = theme === "light" ? "dark" : theme === "dark" ? "system" : "light"
+    setTheme(next)
+  }
+
+  const Icon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor
+  const label = theme === "dark" ? "Dark" : theme === "light" ? "Light" : "System"
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={cycle}
+      title={`Theme: ${label}. Click to cycle.`}
+    >
+      <Icon className="h-[18px] w-[18px]" />
+      <span className="sr-only">Toggle theme ({label})</span>
+    </Button>
+  )
 }
 
 export function Header({ onMenuClick, isNavOpen = false }: HeaderProps) {
@@ -47,7 +72,8 @@ export function Header({ onMenuClick, isNavOpen = false }: HeaderProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1 sm:gap-2">
+          <ThemeToggle />
           <div className="hidden rounded-lg border border-border/70 bg-card/80 px-3 py-1.5 text-right shadow-sm sm:block">
             <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
               Signed in as

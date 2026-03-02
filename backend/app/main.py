@@ -54,7 +54,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
-    expose_headers=["X-Request-ID", "X-Process-Time"],
+    expose_headers=["X-Request-ID", "X-Process-Time", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-SAM-Remaining"],
 )
 
 # Trusted host middleware (production)

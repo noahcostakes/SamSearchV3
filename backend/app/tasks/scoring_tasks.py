@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 # Convert async URL to sync for Celery
 sync_db_url = settings.DATABASE_URL.replace("+asyncpg", "")
-sync_engine = create_engine(sync_db_url, pool_size=5)
+sync_engine = create_engine(sync_db_url, pool_size=20, max_overflow=10)
 SyncSession = sessionmaker(sync_engine)
 
 
@@ -90,6 +90,7 @@ def score_opportunities_task(
     profile_id: str,
     search_history_id: str,
     days_back: int = 30,
+    filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Background task to search SAM.gov and score opportunities with AI.
@@ -99,6 +100,7 @@ def score_opportunities_task(
         profile_id: Company profile ID
         search_history_id: Search history record ID
         days_back: Days to search back
+        filters: Optional advanced filter overrides from user
 
     Returns:
         dict: Search results with scored opportunities
@@ -160,7 +162,11 @@ def score_opportunities_task(
         async def do_search():
             sam_client = SAMClient(sam_api_key)
             try:
-                return await sam_client.search_for_profile(profile_dict, days_back=days_back)
+                return await sam_client.search_for_profile(
+                    profile_dict,
+                    days_back=days_back,
+                    filters=filters,
+                )
             finally:
                 await sam_client.close()
 

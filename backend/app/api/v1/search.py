@@ -1,7 +1,10 @@
 """Search endpoints for SAM.gov opportunities."""
+import csv
+import io
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +22,7 @@ from app.schemas.search import (
     SearchRequest,
     UpdateSavedOpportunityRequest,
 )
+from app.services.audit_service import log_audit_event
 from app.services.usage_tracker import UsageTracker
 from app.tasks.scoring_tasks import score_opportunities_task
 
@@ -29,6 +33,8 @@ router = APIRouter(prefix="/search", tags=["Search"])
 @router.post("/start", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
 async def start_search(
     request: SearchRequest,
+    http_request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
@@ -68,10 +74,32 @@ async def start_search(
             detail=error_message,
         )
 
+    # Check per-user SAM.gov API quota before starting job
+    sam_ok, sam_error = await usage_tracker.check_user_sam_limit(current_user.id)
+    if not sam_ok:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=sam_error,
+        )
+
     # Create search history record
+    search_params = {"days_back": request.days_back}
+    if request.keywords:
+        search_params["keywords"] = request.keywords
+    if request.naics_codes:
+        search_params["naics_codes"] = request.naics_codes
+    if request.ptype:
+        search_params["ptype"] = request.ptype
+    if request.type_of_set_aside:
+        search_params["type_of_set_aside"] = request.type_of_set_aside
+    if request.posted_from:
+        search_params["posted_from"] = request.posted_from
+    if request.posted_to:
+        search_params["posted_to"] = request.posted_to
+
     search_history = SearchHistory(
         user_id=current_user.id,
-        search_params={"days_back": request.days_back},
+        search_params=search_params,
         job_status="pending",
     )
     db.add(search_history)
@@ -84,6 +112,7 @@ async def start_search(
         profile_id=profile.id,
         search_history_id=search_history.id,
         days_back=request.days_back,
+        filters=search_params,
     )
 
     # Update search history with job ID
@@ -94,6 +123,23 @@ async def start_search(
         f"Search started for user: {current_user.email}",
         extra={"job_id": job.id, "days_back": request.days_back},
     )
+
+    await log_audit_event(
+        db,
+        action="search.start",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        request=http_request,
+        resource_type="search",
+        resource_id=search_history.id,
+        details={"days_back": request.days_back, "job_id": job.id},
+    )
+
+    # Inject rate limit headers so the frontend can display remaining quota
+    stats = await usage_tracker.get_user_usage_stats(current_user.id)
+    response.headers["X-RateLimit-Limit"] = str(stats["daily_limit"])
+    response.headers["X-RateLimit-Remaining"] = str(stats["daily_remaining"])
+    response.headers["X-RateLimit-SAM-Remaining"] = str(stats["sam_api_remaining_today"])
 
     return {
         "job_id": job.id,
@@ -286,3 +332,66 @@ async def delete_saved_opportunity(
     await db.commit()
 
     return {"message": "Opportunity removed from saved list"}
+
+
+@router.get("/saved/export", response_class=StreamingResponse)
+async def export_saved_opportunities_csv(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Export all saved opportunities as CSV."""
+    result = await db.execute(
+        select(SavedOpportunity)
+        .where(SavedOpportunity.user_id == current_user.id)
+        .order_by(SavedOpportunity.created_at.desc())
+    )
+    opportunities = list(result.scalars().all())
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header row
+    writer.writerow([
+        "Title",
+        "Notice ID",
+        "Solicitation Number",
+        "Agency",
+        "Posted Date",
+        "Response Deadline",
+        "Relevance Score",
+        "Recommendation",
+        "Status",
+        "Your Notes",
+        "Saved Date",
+        "SAM.gov Link",
+    ])
+
+    for opp in opportunities:
+        writer.writerow([
+            opp.title,
+            opp.notice_id,
+            opp.solicitation_number or "",
+            opp.agency or "",
+            opp.posted_date or "",
+            opp.response_deadline or "",
+            opp.relevance_score,
+            opp.recommendation or "",
+            opp.user_status,
+            opp.user_notes or "",
+            opp.created_at.strftime("%Y-%m-%d %H:%M") if opp.created_at else "",
+            f"https://sam.gov/opp/{opp.notice_id}/view" if opp.notice_id else "",
+        ])
+
+    output.seek(0)
+
+    logger.info(
+        f"CSV export: {len(opportunities)} opportunities for user: {current_user.email}"
+    )
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=saved_opportunities.csv",
+        },
+    )

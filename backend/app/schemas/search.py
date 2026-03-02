@@ -9,6 +9,12 @@ class SearchRequest(BaseModel):
     """Schema for starting a search."""
 
     days_back: int = Field(30, ge=1, le=365)
+    keywords: Optional[str] = Field(None, max_length=500)
+    naics_codes: Optional[List[str]] = Field(None, max_length=10)
+    ptype: Optional[str] = Field(None, max_length=30)
+    type_of_set_aside: Optional[str] = Field(None, max_length=20)
+    posted_from: Optional[str] = Field(None)
+    posted_to: Optional[str] = Field(None)
 
 
 class SearchStatusResponse(BaseModel):

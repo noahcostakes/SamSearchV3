@@ -26,6 +26,7 @@ from app.schemas.user import (
     UserLogin,
     UserResponse,
 )
+from app.services.audit_service import log_audit_event
 from app.services.token_blacklist import TokenBlacklist
 
 logger = get_logger(__name__)
@@ -59,8 +60,12 @@ async def _check_auth_rate_limit(
     except HTTPException:
         raise
     except Exception as e:
-        # Fail open — don't block auth if Redis is down
-        logger.error("Auth rate limit check failed", extra={"error": str(e)})
+        # Fail closed — block auth if Redis is down to prevent brute force
+        logger.error("Auth rate limit check failed — denying request", extra={"error": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable. Please try again later.",
+        )
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -94,6 +99,17 @@ async def register(
     await db.refresh(user)
 
     logger.info("User registered", extra={"user_id": user.id})
+
+    await log_audit_event(
+        db,
+        action="auth.register",
+        user_id=user.id,
+        user_email=user.email,
+        request=request,
+        resource_type="user",
+        resource_id=user.id,
+    )
+
     return user
 
 
@@ -114,6 +130,16 @@ async def login(
     # Verify credentials
     if not user or not verify_password(credentials.password, user.hashed_password):
         logger.warning("Failed login attempt")
+
+        await log_audit_event(
+            db,
+            action="auth.login_failed",
+            user_email=credentials.email,
+            request=request,
+            status="failure",
+            error_message="Invalid credentials",
+        )
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -130,13 +156,25 @@ async def login(
 
     logger.info("User logged in", extra={"user_id": user.id})
 
+    await log_audit_event(
+        db,
+        action="auth.login",
+        user_id=user.id,
+        user_email=user.email,
+        request=request,
+        resource_type="user",
+        resource_id=user.id,
+    )
+
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 async def logout(
+    request: Request,
     token: str = Depends(get_token_from_header),
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
     redis: Redis = Depends(get_redis),
 ) -> dict:
     """Logout and invalidate all user tokens."""
@@ -147,6 +185,16 @@ async def logout(
     await blacklist.add_user_logout(current_user.id, logout_timestamp)
 
     logger.info("User logged out", extra={"user_id": current_user.id})
+
+    await log_audit_event(
+        db,
+        action="auth.logout",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        request=request,
+        resource_type="user",
+        resource_id=current_user.id,
+    )
 
     return {"message": "Successfully logged out"}
 
@@ -248,6 +296,7 @@ async def get_sam_api_key_status(
 @router.put("/sam-key", status_code=status.HTTP_200_OK)
 async def update_sam_api_key(
     key_data: SAMKeyUpdate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -262,6 +311,15 @@ async def update_sam_api_key(
     await db.commit()
 
     logger.info("SAM API key updated", extra={"user_id": current_user.id})
+
+    await log_audit_event(
+        db,
+        action="auth.sam_key_updated",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        request=request,
+        resource_type="sam_key",
+    )
 
     return {"message": "SAM.gov API key updated successfully"}
 

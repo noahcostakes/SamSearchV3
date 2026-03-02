@@ -119,7 +119,7 @@ export function DashboardPage() {
               <Skeleton className="h-4 w-3/5" />
             </div>
           ) : searchHistory?.length ? (
-            <ul className="space-y-2">
+            <ul className="content-reveal space-y-2">
               {searchHistory.slice(0, 3).map((search) => (
                 <li key={search.id} className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm">
                   <span className="truncate">Search #{search.id.slice(0, 8)}</span>
@@ -155,7 +155,7 @@ export function DashboardPage() {
             ))}
           </div>
         ) : savedOpportunities?.length ? (
-          <div className="space-y-3">
+          <div className="content-reveal space-y-3">
             {savedOpportunities.slice(0, 3).map((opportunity) => (
               <div key={opportunity.id} className="flex flex-col justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-3 sm:flex-row sm:items-center">
                 <div className="min-w-0">

@@ -190,13 +190,84 @@ class UsageTracker:
                     await pipe.reset()
         except Exception as e:
             logger.error(f"Failed to atomically consume user search: {e}")
-            # Preserve previous fail-open behavior for availability.
-            return True, None, 0, 0
+            # Fail closed — deny searches when Redis is unavailable to prevent
+            # quota bypass and protect SAM.gov API rate limits.
+            return False, "Search service temporarily unavailable. Please try again later.", 0, 0
+
+    # ------------------------------------------------------------------
+    # Per-user SAM.gov API quota
+    # ------------------------------------------------------------------
+
+    async def get_user_sam_usage_today(self, user_id: str) -> tuple[int, int]:
+        """Get per-user SAM.gov API usage for today.
+
+        Returns:
+            tuple: (used, remaining)
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"usage:sam:{user_id}:{today}"
+
+        try:
+            used = await self.redis.get(key)
+            used = int(used) if used else 0
+            # Per-user share of global quota (default: 20% of global limit)
+            per_user_limit = settings.SAM_RATE_LIMIT_PER_DAY // 5
+            remaining = max(0, per_user_limit - used)
+            return used, remaining
+        except Exception as e:
+            logger.error(f"Failed to get per-user SAM usage: {e}")
+            return 0, 0  # Fail closed
+
+    async def increment_user_sam_usage(self, user_id: str) -> int:
+        """Increment per-user SAM.gov API usage counter.
+
+        Also increments the global counter.  Returns new per-user count.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        user_key = f"usage:sam:{user_id}:{today}"
+        global_key = f"usage:sam:{today}"
+
+        try:
+            pipe = self.redis.pipeline()
+            pipe.incr(user_key)
+            pipe.incr(global_key)
+            pipe.expire(user_key, 90000)
+            pipe.expire(global_key, 90000)
+            results = await pipe.execute()
+            return int(results[0])
+        except Exception as e:
+            logger.error(f"Failed to increment per-user SAM usage: {e}")
+            return 0
+
+    async def check_user_sam_limit(self, user_id: str) -> tuple[bool, Optional[str]]:
+        """Check both global and per-user SAM.gov API limits.
+
+        Returns:
+            tuple: (allowed, error_message or None)
+        """
+        # Global limit
+        global_ok = await self.check_sam_limit()
+        if not global_ok:
+            return False, "Platform SAM.gov daily quota exhausted. Try again tomorrow."
+
+        # Per-user limit
+        _, remaining = await self.get_user_sam_usage_today(user_id)
+        if remaining <= 0:
+            return False, "Your daily SAM.gov API quota reached. Resets at midnight UTC."
+
+        return True, None
+
+    # ------------------------------------------------------------------
+    # Aggregated user stats
+    # ------------------------------------------------------------------
 
     async def get_user_usage_stats(self, user_id: str) -> dict:
-        """Get user's usage statistics."""
+        """Get user's usage statistics including SAM quota."""
         hourly = await self.get_user_search_count(user_id, "hour")
         daily = await self.get_user_search_count(user_id, "day")
+        sam_used, sam_remaining = await self.get_user_sam_usage_today(user_id)
+        global_sam_used, global_sam_remaining = await self.get_sam_usage_today()
+        per_user_sam_limit = settings.SAM_RATE_LIMIT_PER_DAY // 5
 
         return {
             "searches_this_hour": hourly,
@@ -205,4 +276,9 @@ class UsageTracker:
             "daily_limit": settings.RATE_LIMIT_SEARCHES_PER_DAY,
             "hourly_remaining": max(0, settings.RATE_LIMIT_SEARCHES_PER_HOUR - hourly),
             "daily_remaining": max(0, settings.RATE_LIMIT_SEARCHES_PER_DAY - daily),
+            "sam_api_used_today": sam_used,
+            "sam_api_remaining_today": sam_remaining,
+            "sam_api_user_limit": per_user_sam_limit,
+            "sam_api_global_used": global_sam_used,
+            "sam_api_global_remaining": global_sam_remaining,
         }

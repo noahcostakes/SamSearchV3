@@ -133,3 +133,22 @@ export function useUpdateOpportunityNotes() {
     },
   })
 }
+
+export function useExportCSV() {
+  return useMutation({
+    mutationFn: () => searchApi.exportCSV(),
+    onSuccess: () => {
+      toast({
+        title: "Export complete",
+        description: "Your saved opportunities have been downloaded as CSV.",
+      })
+    },
+    onError: (error: Error) => {
+      toast({
+        variant: "destructive",
+        title: "Export failed",
+        description: error.message || "Could not export opportunities",
+      })
+    },
+  })
+}
