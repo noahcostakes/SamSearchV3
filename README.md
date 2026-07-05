@@ -1,3 +1,5 @@
+Note: This repository has been pulled from previous iterations of my SAMSearch project. This is the latest version of the project and the only version currently publicly available. 
+
 # SamSearch - AI-Powered Government Contract Search Platform
 
 A full-stack B2B SaaS application that helps small businesses discover, evaluate, and track government contract opportunities from SAM.gov using AI-powered matching and scoring.
