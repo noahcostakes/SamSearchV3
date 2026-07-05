@@ -108,3 +108,6 @@ dmypy.json
 # Backup
 *.bak
 *.backup
+
+# Claude Code local settings (machine-specific; may contain local paths/dev creds)
+.claude/settings.local.json
